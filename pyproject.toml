@@ -12,6 +12,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "codespell>=2.4.1",
     "coverage>=7.9.1",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
@@ -21,3 +22,20 @@ dev = [
     "ruff>=0.12.0",
     "seaborn>=0.13.2",
 ]
+
+[tool.ruff]
+include = ["lio/**/*.py", "tests/**/*.py"]
+
+[tool.ruff.lint]
+select = ["I"]
+
+# [tool.ruff.format]
+# quote-style = "double"
+# line-ending = "lf"
+
+# [tool.mypy]
+# strict = true
+
+[tool.codespell]
+# Add a comma-separated list of file patterns to skip
+skip = "./data/*"
