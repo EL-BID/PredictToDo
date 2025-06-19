@@ -1,17 +1,55 @@
-# Default target executed when no arguments are given to make
-all: help
+# The single source of truth for formatting and linting rules is `pyproject.toml`
+# Pre-commit hooks enforce these rules automatically on commit
 
-TEST_FILES = tests/
-PYTHON_FILES=src/
+.PHONY: all help format check lint test test-cov test-unit test-integration test-watch test-profile test-extended spell-check spell-fix
 
-test:
-	uv run pytest $(TEST_FILES)
+# Let's silence the command echoing for a cleaner output
+.SILENT:
 
-test_cov:
-	uv run coverage run -m pytest $(TEST_FILES)
-	uv run coverage report -m
-	uv run coverage html
+TEST_DIR=./tests
+SOURCE_DIR=./src
+
+# Define tool shortcuts for consistency and easy updates
+UV=uv run
+PYTEST=$(UV) pytest
+RUFF=$(UV) ruff
+CODESPELL=$(UV) codespell
+
+# ------------------------------------------------------------------------------
+# CODE QUALITY (Formatting & Linting)
+# ------------------------------------------------------------------------------
 
 format:
-	uv run ruff format $(PYTHON_FILES)
-	uv run ruff format $(TEST_FILES)
+	@echo "=> Formatting all Python files with Ruff..."
+	$(RUFF) format .
+	@echo "=> Sorting imports with Ruff..."
+	$(RUFF) check --select I --fix .
+
+check: lint
+
+lint:
+	@echo "=> Checking formatting (re-run 'make format' if this fails)..."
+	$(RUFF) format --diff .
+	@echo "\n=> Checking for linting errors with Ruff..."
+	$(RUFF) check .
+
+spell-check:
+	@echo "=> Checking for spelling errors..."
+	$(CODESPELL) --toml pyproject.toml
+
+spell-fix:
+	@echo "=> Fixing spelling errors..."
+	$(CODESPELL) --toml pyproject.toml -w
+
+# ------------------------------------------------------------------------------
+# TESTING
+# ------------------------------------------------------------------------------
+
+test:
+	@echo "=> Running the complete test suite..."
+	$(PYTEST) --disable-warnings $(TEST_DIR)
+
+test-cov:
+	@echo "=> Running tests and generating coverage report with pytest-cov..."
+	$(PYTEST) --cov=$(SOURCE_DIR) --cov-report=term-missing --cov-report=html $(TEST_DIR)
+	@echo "\nCoverage report generated. Open 'htmlcov/index.html' to view."
