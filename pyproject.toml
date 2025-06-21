@@ -12,6 +12,8 @@ dependencies = [
     "mapclassify>=2.9.0",
     "networkx>=3.5",
     "numpy>=2.3.0",
+    "pyarrow>=20.0.0",
+    "torch>=2.7.1",
 ]
 
 [dependency-groups]
@@ -29,7 +31,7 @@ dev = [
 ]
 
 [tool.ruff]
-include = ["lio/**/*.py", "tests/**/*.py"]
+include = ["src/**/*.py", "tests/**/*.py"]
 
 [tool.ruff.lint]
 select = ["I"]
