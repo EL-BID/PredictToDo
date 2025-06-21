@@ -183,3 +183,4 @@ cython_debug/
 data/
 datos/
 datos_procesados/
+prompts/
