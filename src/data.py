@@ -269,39 +269,101 @@ class GraphTimeSeriesLoader:
 
         return pd.concat(df_list, ignore_index=True)
 
+    def _expand_road_state_data(self, state_df, all_timeframes, node_ids):
+        """
+        Expands state data (defined by start/end) to discrete 15-min timeframes.
+        """
+        final_df_columns = [
+            "road_id",
+            "timeframe",
+        ] + [
+            col
+            for col in self.road_state_df.columns
+            if "timeframe" not in col and col != "road_id"
+        ]
+        if state_df.empty:
+            return pd.DataFrame(columns=final_df_columns)
+
+        # Create a DataFrame of all combinations of relevant nodes and timestamps
+        target_index_df = pd.MultiIndex.from_product(
+            [node_ids, all_timeframes], names=["road_id", "timeframe"]
+        ).to_frame(index=False)
+
+        # Prepare for merge_asof by sorting by time
+        target_index_df = target_index_df.sort_values("timeframe")
+        state_df = state_df.sort_values("timeframe_start")
+
+        # For each 15-min point, find the last state that had started
+        expanded_df = pd.merge_asof(
+            target_index_df,
+            state_df.drop(columns="source", errors="ignore"),
+            left_on="timeframe",
+            right_on="timeframe_start",
+            by="road_id",
+            direction="backward",
+        )
+
+        # A state is valid if the timeframe is also before the state's end time
+        valid_state_mask = expanded_df["timeframe"] <= expanded_df["timeframe_end"]
+
+        # Keep only the valid rows and the columns we need
+        result_df = expanded_df[valid_state_mask][final_df_columns].copy()
+
+        return result_df
+
     def load_data(self, node_ids, time_windows):
         """
-        Loads static and temporal data for specified nodes and time windows.
+        Loads static and temporal data, creating a dense DataFrame for temporal features.
 
         Args:
             node_ids (list): A list of node IDs to fetch data for.
             time_windows (list): A list of tuples, where each tuple is
                                  (timeframe_start, num_15_min_periods).
-                                 'timeframe_start' is a string like 'YYYY-MM-DD HH:MM:SS'.
-                                 'num_15_min_periods' is the number of 15-minute intervals.
 
         Returns:
             tuple: A tuple containing two DataFrames:
                    - static_df (pd.DataFrame): Static attributes for the requested nodes.
-                   - temporal_df (pd.DataFrame): All temporal features for the nodes
-                                                 within the specified time windows.
+                   - temporal_df (pd.DataFrame): A dense DataFrame with all temporal features,
+                                                 indexed by (road_id, timeframe), with missing
+                                                 values filled with 0.
         """
         print(f"\n--- Starting data load for {len(node_ids)} nodes ---")
         # Get static data from the base graph
         static_data = []
         for node_id in node_ids:
             if self.base_graph.has_node(node_id):
-                # Add node_id to the dictionary of attributes
                 attrs = self.base_graph.nodes[node_id].copy()
                 attrs["node_id"] = node_id
                 static_data.append(attrs)
+        static_df = pd.DataFrame(static_data).set_index("node_id")
 
-        static_df = pd.DataFrame(static_data)
-        if "node_id" in static_df.columns:
-            static_df = static_df.set_index("node_id")
+        # Generate all expected timeframes and the master index
+        all_expected_timeframes = []
+        for start_str, num_15_min_periods in time_windows:
+            start_date = pd.to_datetime(start_str)
+            all_expected_timeframes.extend(
+                [
+                    start_date + timedelta(minutes=i * 15)
+                    for i in range(num_15_min_periods)
+                ]
+            )
+        all_expected_timeframes = sorted(list(set(all_expected_timeframes)))
 
-        # Get temporal data from all sources
-        all_temporal_dfs = []
+        master_index = pd.MultiIndex.from_product(
+            [node_ids, all_expected_timeframes], names=["road_id", "timeframe"]
+        )
+        master_temporal_df = pd.DataFrame(index=master_index)
+
+        # Load data from all sources
+        source_dfs = {}
+        raw_data_fragments = {
+            "events": [],
+            "incidents": [],
+            "road_state": [],
+            "irregularities": [],
+            "coi_points": [],
+            "coi_tracts": [],
+        }
 
         for start_str, num_15_min_periods in time_windows:
             start_date = pd.to_datetime(start_str)
@@ -311,96 +373,95 @@ class GraphTimeSeriesLoader:
             end_date = start_date + timedelta(minutes=duration_minutes)
 
             # Filter in-memory DataFrames
-            # Events
-            events_temporal = self.events_df[
-                self.events_df["road_id"].isin(node_ids)
-                & (self.events_df["timeframe"] >= start_date)
-                & (self.events_df["timeframe"] <= end_date)
-            ].copy()
-            if not events_temporal.empty:
-                events_temporal["source"] = "events"
-                all_temporal_dfs.append(events_temporal)
+            raw_data_fragments["events"].append(
+                self.events_df[
+                    self.events_df["road_id"].isin(node_ids)
+                    & self.events_df["timeframe"].between(start_date, end_date)
+                ]
+            )
+            raw_data_fragments["incidents"].append(
+                self.incidents_df[
+                    self.incidents_df["road_id"].isin(node_ids)
+                    & self.incidents_df["timeframe"].between(start_date, end_date)
+                ]
+            )
+            raw_data_fragments["road_state"].append(
+                self.road_state_df[
+                    self.road_state_df["road_id"].isin(node_ids)
+                    & (self.road_state_df["timeframe_start"] <= end_date)
+                    & (self.road_state_df["timeframe_end"] >= start_date)
+                ]
+            )
 
-            # Incidents
-            incidents_temporal = self.incidents_df[
-                self.incidents_df["road_id"].isin(node_ids)
-                & (self.incidents_df["timeframe"] >= start_date)
-                & (self.incidents_df["timeframe"] <= end_date)
-            ].copy()
-            if not incidents_temporal.empty:
-                incidents_temporal["source"] = "incidents"
-                all_temporal_dfs.append(incidents_temporal)
-
-            # Road State (overlap condition)
-            road_state_temporal = self.road_state_df[
-                self.road_state_df["road_id"].isin(node_ids)
-                & (self.road_state_df["timeframe_start"] <= end_date)
-                & (self.road_state_df["timeframe_end"] >= start_date)
-            ].copy()
-            if not road_state_temporal.empty:
-                road_state_temporal["source"] = "road_state"
-                all_temporal_dfs.append(road_state_temporal)
-
-            # Load data from Parquet files
-            # Irregularities
             irreg_files = self._find_relevant_files(
                 self.irregularities_files, start_date, end_date
             )
-            irreg_df = self._load_data_from_parquets(
-                irreg_files,
-                node_ids,
-                start_date,
-                end_date,
-                node_id_col="id_mvi",
-                time_col="timeframe",
+            raw_data_fragments["irregularities"].append(
+                self._load_data_from_parquets(
+                    irreg_files, node_ids, start_date, end_date, "id_mvi", "timeframe"
+                )
             )
-            if not irreg_df.empty:
-                irreg_df["source"] = "irregularities"
-                # Standardize column names for concatenation
-                irreg_df = irreg_df.rename(columns={"id_mvi": "road_id"})
-                all_temporal_dfs.append(irreg_df)
 
-            # COI Points
-            coi_points_files = self._find_relevant_files(
+            coi_p_files = self._find_relevant_files(
                 self.coi_points_files, start_date, end_date
             )
-            coi_points_df = self._load_data_from_parquets(
-                coi_points_files,
-                node_ids,
-                start_date,
-                end_date,
-                node_id_col="road_id",
-                time_col="timeframe",
+            raw_data_fragments["coi_points"].append(
+                self._load_data_from_parquets(
+                    coi_p_files, node_ids, start_date, end_date, "road_id", "timeframe"
+                )
             )
-            if not coi_points_df.empty:
-                coi_points_df["source"] = "coi_points"
-                all_temporal_dfs.append(coi_points_df)
 
-            # COI Tracts
-            coi_tracts_files = self._find_relevant_files(
+            coi_t_files = self._find_relevant_files(
                 self.coi_tracts_files, start_date, end_date
             )
-            coi_tracts_df = self._load_data_from_parquets(
-                coi_tracts_files,
-                node_ids,
-                start_date,
-                end_date,
-                node_id_col="road_id",
-                time_col="timeframe",
+            raw_data_fragments["coi_tracts"].append(
+                self._load_data_from_parquets(
+                    coi_t_files, node_ids, start_date, end_date, "road_id", "timeframe"
+                )
             )
-            if not coi_tracts_df.empty:
-                coi_tracts_df["source"] = "coi_tracts"
-                all_temporal_dfs.append(coi_tracts_df)
 
-        if not all_temporal_dfs:
-            return static_df, pd.DataFrame()
+        # 4. Consolidate and process each source
+        for name, fragments in raw_data_fragments.items():
+            if fragments:
+                source_dfs[name] = pd.concat(
+                    fragments, ignore_index=True
+                ).drop_duplicates()
+            else:
+                source_dfs[name] = pd.DataFrame()
 
-        temporal_df = pd.concat(all_temporal_dfs, ignore_index=True)
+        # 5. Join all sources into the master DataFrame
+        # Process and join point-in-time sources
+        for name, df in source_dfs.items():
+            if df.empty or name == "road_state":
+                continue
 
-        if "timeframe" in temporal_df.columns:
-            temporal_df = temporal_df.sort_values(by="timeframe").reset_index(drop=True)
+            # Standardize ID column and set index
+            if "id_mvi" in df.columns:
+                df = df.rename(columns={"id_mvi": "road_id"})
+
+            indexed_df = df.set_index(["road_id", "timeframe"])
+            master_temporal_df = master_temporal_df.join(indexed_df, how="left")
+
+        # Special handling for road_state data
+        expanded_state_df = self._expand_road_state_data(
+            source_dfs["road_state"], all_expected_timeframes, node_ids
+        )
+        if not expanded_state_df.empty:
+            master_temporal_df = master_temporal_df.join(
+                expanded_state_df.set_index(["road_id", "timeframe"]), how="left"
+            )
+
+        # 6. Fill missing values and finalize
+        final_temporal_df = master_temporal_df.fillna(0)
+
+        # Convert any object columns (now filled with 0) to numeric if possible
+        for col in final_temporal_df.columns:
+            if final_temporal_df[col].dtype == "object":
+                final_temporal_df[col] = pd.to_numeric(
+                    final_temporal_df[col], errors="ignore"
+                )
 
         print(
-            f"--- Load complete. Found {len(static_df)} static records and {len(temporal_df)} temporal records. ---"
+            f"--- Load complete. Found {len(static_df)} static records. Temporal DF shape: {final_temporal_df.shape} ---"
         )
-        return static_df, temporal_df
+        return static_df, final_temporal_df.reset_index()
