@@ -160,6 +160,32 @@ class GraphTimeSeriesLoader:
             date_format="%Y%m%d",
         )
 
+        self.column_names = {
+            "events": self.events_df.columns.tolist(),
+            "incidents": self.incidents_df.columns.tolist(),
+            # For road_state we generat the list that could be returned by `_expand_road_state_data`
+            "road_state": ["road_id", "timeframe"]
+            + [
+                col
+                for col in self.road_state_df.columns
+                if "timeframe" not in col and col != "road_id"
+            ],
+            # For these three we can load one of the files to get the columns
+            "irregularities": [],
+            "coi_points": [],
+            "coi_tracts": [],
+        }
+        # Load one file from each of the last three to get their columns
+        if self.irregularities_files:
+            sample_irreg_df = pd.read_parquet(self.irregularities_files[0][2])
+            self.column_names["irregularities"] = sample_irreg_df.columns.tolist()
+        if self.coi_points_files:
+            sample_coi_df = pd.read_parquet(self.coi_points_files[0][2])
+            self.column_names["coi_points"] = sample_coi_df.columns.tolist()
+        if self.coi_tracts_files:
+            sample_coi_tracts_df = pd.read_parquet(self.coi_tracts_files[0][2])
+            self.column_names["coi_tracts"] = sample_coi_tracts_df.columns.tolist()
+
     def _add_node_attributes(self, df: pd.DataFrame, node_id_col: str):
         """
         Adds static node attributes to a DataFrame based on the base graph.
@@ -273,16 +299,8 @@ class GraphTimeSeriesLoader:
         """
         Expands state data (defined by start/end) to discrete 15-min timeframes.
         """
-        final_df_columns = [
-            "road_id",
-            "timeframe",
-        ] + [
-            col
-            for col in self.road_state_df.columns
-            if "timeframe" not in col and col != "road_id"
-        ]
         if state_df.empty:
-            return pd.DataFrame(columns=final_df_columns)
+            return pd.DataFrame(columns=self.column_names["road_state"])
 
         # Create a DataFrame of all combinations of relevant nodes and timestamps
         target_index_df = pd.MultiIndex.from_product(
@@ -307,7 +325,9 @@ class GraphTimeSeriesLoader:
         valid_state_mask = expanded_df["timeframe"] <= expanded_df["timeframe_end"]
 
         # Keep only the valid rows and the columns we need
-        result_df = expanded_df[valid_state_mask][final_df_columns].copy()
+        result_df = expanded_df[valid_state_mask][
+            self.column_names["road_state"]
+        ].copy()
 
         return result_df
 
@@ -420,7 +440,7 @@ class GraphTimeSeriesLoader:
                 )
             )
 
-        # 4. Consolidate and process each source
+        # Consolidate and process each source
         for name, fragments in raw_data_fragments.items():
             if fragments:
                 source_dfs[name] = pd.concat(
@@ -429,7 +449,7 @@ class GraphTimeSeriesLoader:
             else:
                 source_dfs[name] = pd.DataFrame()
 
-        # 5. Join all sources into the master DataFrame
+        # Join all sources into the master DataFrame
         # Process and join point-in-time sources
         for name, df in source_dfs.items():
             if df.empty or name == "road_state":
@@ -451,15 +471,14 @@ class GraphTimeSeriesLoader:
                 expanded_state_df.set_index(["road_id", "timeframe"]), how="left"
             )
 
-        # 6. Fill missing values and finalize
+        # Fill missing values and complete with all the expected columns
         final_temporal_df = master_temporal_df.fillna(0)
-
-        # Convert any object columns (now filled with 0) to numeric if possible
-        for col in final_temporal_df.columns:
-            if final_temporal_df[col].dtype == "object":
-                final_temporal_df[col] = pd.to_numeric(
-                    final_temporal_df[col], errors="ignore"
-                )
+        for column_names in self.column_names.values():
+            for col in column_names:
+                if col not in final_temporal_df.columns:
+                    final_temporal_df[col] = 0
+        # The columns 'road_id' and 'timeframe' are not needed in the final DataFrame since they are the index
+        final_temporal_df.drop(columns=["road_id", "timeframe"], inplace=True)
 
         print(
             f"--- Load complete. Found {len(static_df)} static records. Temporal DF shape: {final_temporal_df.shape} ---"
