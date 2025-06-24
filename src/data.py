@@ -347,6 +347,10 @@ class GraphTimeSeriesLoader:
                                                  indexed by (road_id, timeframe), with missing
                                                  values filled with 0.
         """
+        if not node_ids:
+            print("No node IDs provided. Returning empty DataFrames.")
+            return pd.DataFrame(), pd.DataFrame()
+
         print(f"\n--- Starting data load for {len(node_ids)} nodes ---")
         # Get static data from the base graph
         static_data = []
@@ -356,6 +360,12 @@ class GraphTimeSeriesLoader:
                 attrs["node_id"] = node_id
                 static_data.append(attrs)
         static_df = pd.DataFrame(static_data).set_index("node_id")
+
+        if not time_windows:
+            print(
+                f"--- Load complete. Found {len(static_df)} static records. No temporal data requested. ---"
+            )
+            return static_df, pd.DataFrame()
 
         # Generate all expected timeframes and the master index
         all_expected_timeframes = []
