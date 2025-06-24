@@ -186,7 +186,7 @@ class GraphTimeSeriesLoader:
             sample_coi_tracts_df = pd.read_parquet(self.coi_tracts_files[0][2])
             self.column_names["coi_tracts"] = sample_coi_tracts_df.columns.tolist()
 
-    def _add_node_attributes(self, df: pd.DataFrame, node_id_col: str):
+    def _add_node_attributes(self, df: pd.DataFrame, node_id_col: str) -> None:
         """
         Adds static node attributes to a DataFrame based on the base graph.
 
@@ -206,7 +206,9 @@ class GraphTimeSeriesLoader:
             if node_id in self.base_graph.nodes:
                 self.base_graph.nodes[node_id].update(row.to_dict())
 
-    def _preprocess_filenames(self, filenames, pattern, date_format="%Y-%m-%d"):
+    def _preprocess_filenames(
+        self, filenames: list[str], pattern: str, date_format: str = "%Y-%m-%d"
+    ) -> list[tuple[pd.Timestamp, pd.Timestamp, str]]:
         """
         Parses filenames to extract start and end dates.
 
@@ -234,7 +236,12 @@ class GraphTimeSeriesLoader:
                 print(f"Warning: Could not parse dates from filename: {f}")
         return processed_files
 
-    def _find_relevant_files(self, file_list, query_start_date, query_end_date):
+    def _find_relevant_files(
+        self,
+        file_list: list[tuple[pd.Timestamp, pd.Timestamp, str]],
+        query_start_date: pd.Timestamp,
+        query_end_date: pd.Timestamp,
+    ) -> list[str]:
         """
         Finds files whose date ranges overlap with the query time window.
 
@@ -254,8 +261,14 @@ class GraphTimeSeriesLoader:
         return relevant_files
 
     def _load_data_from_parquets(
-        self, filepaths, node_ids, start_date, end_date, node_id_col, time_col
-    ):
+        self,
+        filepaths: list[str],
+        node_ids: list[str],
+        start_date: pd.Timestamp,
+        end_date: pd.Timestamp,
+        node_id_col: str,
+        time_col: str,
+    ) -> pd.DataFrame:
         """
         Loads and filters data from a list of parquet files.
 
@@ -295,7 +308,9 @@ class GraphTimeSeriesLoader:
 
         return pd.concat(df_list, ignore_index=True)
 
-    def _expand_road_state_data(self, state_df, all_timeframes, node_ids):
+    def _expand_road_state_data(
+        self, state_df: pd.DataFrame, all_timeframes: list[str], node_ids: list[str]
+    ) -> pd.DataFrame:
         """
         Expands state data (defined by start/end) to discrete 15-min timeframes.
         """
@@ -331,7 +346,9 @@ class GraphTimeSeriesLoader:
 
         return result_df
 
-    def load_data(self, node_ids, time_windows):
+    def load_data(
+        self, node_ids: list[str], time_windows: list[tuple[str, int]]
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         Loads static and temporal data, creating a dense DataFrame for temporal features.
 
