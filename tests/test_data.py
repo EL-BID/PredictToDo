@@ -270,7 +270,7 @@ def test_load_data_full(data_loader):
     """The main test case for the load_data method with data from all sources."""
     nodes_to_load = [101, 102]
     # Query for 1 hour (4 * 15 min intervals)
-    time_windows_to_load = [("2024-07-10 08:00:00", 4)]
+    time_windows_to_load = [("2024-07-10 08:30:00", 1, 2)]
 
     static_df, temporal_df = data_loader.load_data(nodes_to_load, time_windows_to_load)
 
@@ -324,7 +324,7 @@ def test_load_data_full(data_loader):
 def test_load_data_no_temporal_match(data_loader):
     """Test that an empty but correctly shaped DataFrame is returned when no data is found."""
     nodes_to_load = [103]  # This node has no temporal data
-    time_windows_to_load = [("2024-07-10 08:00:00", 4)]
+    time_windows_to_load = [("2024-07-10 08:30:00", 2, 1)]
 
     static_df, temporal_df = data_loader.load_data(nodes_to_load, time_windows_to_load)
     print("STATIC DATAFRAME:")
@@ -357,7 +357,7 @@ def test_load_data_no_temporal_match(data_loader):
 def test_load_data_empty_inputs(data_loader):
     """Test behavior with empty node_ids or time_windows."""
     # Empty node_ids
-    static_df, temporal_df = data_loader.load_data([], [("2024-07-10 08:00:00", 4)])
+    static_df, temporal_df = data_loader.load_data([], [("2024-07-10 08:00:00", 4, 0)])
     assert static_df.empty
     assert temporal_df.empty
 
@@ -365,3 +365,60 @@ def test_load_data_empty_inputs(data_loader):
     static_df, temporal_df = data_loader.load_data([101], [])
     assert len(static_df) == 1
     assert temporal_df.empty
+
+
+def test_load_data_symmetric_window(data_loader):
+    """Test the load_data method with a symmetric window (backwards and forwards)."""
+    nodes_to_load = [101, 102]
+    # Query for a symmetric window around a center time
+    time_windows_to_load = [("2024-07-10 08:30:00", 3, 3)]  # 3 backwards, 3 forwards
+
+    static_df, temporal_df = data_loader.load_data(nodes_to_load, time_windows_to_load)
+
+    # Check static data
+    assert len(static_df) == 2
+    assert static_df.index.tolist() == [101, 102]
+
+    # Check temporal data shape and index
+    assert len(temporal_df) == 14  # 2 nodes * (3 back + 1 center + 3 forward)
+    assert "road_id" in temporal_df.columns and "timeframe" in temporal_df.columns
+    assert set(temporal_df["road_id"].unique()) == {101, 102}
+
+    # Check specific data points
+    temporal_df = temporal_df.set_index(["road_id", "timeframe"])
+    print(temporal_df.to_markdown())
+    # Check that the timeframes are correctly expanded
+    expected_timeframes = pd.date_range(
+        start="2024-07-10 07:45:00", end="2024-07-10 09:15:00", freq="15min"
+    )
+    assert set(temporal_df.index.get_level_values("timeframe")) == set(
+        expected_timeframes
+    )
+
+
+@pytest.mark.parametrize(
+    "timeframe_unmatched,timeframe_rounded",
+    [
+        ("2024-07-10 08:31:12", "2024-07-10 08:30:00"),  # Unmatched, should round down
+        ("2024-07-10 08:29:59", "2024-07-10 08:30:00"),  # Unmatched, should round up
+    ],
+)
+def test_load_data_non_matching_timeframe(
+    data_loader, timeframe_unmatched, timeframe_rounded
+):
+    """Test that no data is returned when the timeframe does not match any data."""
+    nodes_to_load = [101, 102]
+    # Query for a timeframe that does not match any data
+    time_windows_to_load = [(timeframe_unmatched, 3, 3)]
+    static_df, temporal_df = data_loader.load_data(nodes_to_load, time_windows_to_load)
+
+    # No data at this exact time, but it should be treated as if
+    # the timeframe was rounded to the nearest 15 minutes
+    target_time_windows_to_load = [(timeframe_rounded, 3, 3)]
+    target_static_df, target_temporal_df = data_loader.load_data(
+        nodes_to_load, target_time_windows_to_load
+    )
+
+    # Assert that the dataframes are the same
+    pd.testing.assert_frame_equal(static_df, target_static_df)
+    pd.testing.assert_frame_equal(temporal_df, target_temporal_df)

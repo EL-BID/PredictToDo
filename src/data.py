@@ -347,7 +347,7 @@ class GraphTimeSeriesLoader:
         return result_df
 
     def load_data(
-        self, node_ids: list[str], time_windows: list[tuple[str, int]]
+        self, node_ids: list[str], time_windows: list[tuple[str, int, int]]
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         Loads static and temporal data, creating a dense DataFrame for temporal features.
@@ -355,7 +355,7 @@ class GraphTimeSeriesLoader:
         Args:
             node_ids (list): A list of node IDs to fetch data for.
             time_windows (list): A list of tuples, where each tuple is
-                                 (timeframe_start, num_15_min_periods).
+                                 (timeframe, num_15_min_periods_forwards, num_15_min_periods_backwards).
 
         Returns:
             tuple: A tuple containing two DataFrames:
@@ -386,13 +386,14 @@ class GraphTimeSeriesLoader:
 
         # Generate all expected timeframes and the master index
         all_expected_timeframes = []
-        for start_str, num_15_min_periods in time_windows:
-            start_date = pd.to_datetime(start_str)
+        for timeframe_str, num_forwards, num_backwards in time_windows:
+            center_time = pd.to_datetime(timeframe_str)
+            # Round center_time to the nearest 15 minutes
+            center_time = center_time.round("15min")
+            start_date = center_time - timedelta(minutes=num_backwards * 15)
+            total_periods = num_backwards + num_forwards + 1
             all_expected_timeframes.extend(
-                [
-                    start_date + timedelta(minutes=i * 15)
-                    for i in range(num_15_min_periods)
-                ]
+                [start_date + timedelta(minutes=i * 15) for i in range(total_periods)]
             )
         all_expected_timeframes = sorted(list(set(all_expected_timeframes)))
 
@@ -412,12 +413,10 @@ class GraphTimeSeriesLoader:
             "coi_tracts": [],
         }
 
-        for start_str, num_15_min_periods in time_windows:
-            start_date = pd.to_datetime(start_str)
-            # The last timestamp in the window is (n-1)*15 minutes after the start
-            # This makes the window inclusive of `num_15_min_periods` points
-            duration_minutes = (num_15_min_periods - 1) * 15
-            end_date = start_date + timedelta(minutes=duration_minutes)
+        for timeframe_str, num_forwards, num_backwards in time_windows:
+            center_time = pd.to_datetime(timeframe_str)
+            start_date = center_time - timedelta(minutes=num_backwards * 15)
+            end_date = center_time + timedelta(minutes=num_forwards * 15)
 
             # Filter in-memory DataFrames
             raw_data_fragments["events"].append(
