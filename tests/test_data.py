@@ -106,13 +106,16 @@ def file_paths(temp_data_dir: str) -> dict[str, str | list[str]]:
             "timeframe": pd.to_datetime(["2024-07-10 08:15:00"]),
             "id_mvi": [101],
             "irreg_type": [0.9],
+            "jamLevel": [2],
         }
     )
     irreg_f1 = os.path.join(IRREG_DIR, "irregs_proc_2024-07-01_2024-07-15.parquet")
     irreg_df_1.to_parquet(irreg_f1)
 
     irreg_f2 = os.path.join(IRREG_DIR, "irregs_proc_2024-08-01_2024-08-15.parquet")
-    pd.DataFrame({"timeframe": [], "id_mvi": [], "irreg_type": []}).to_parquet(irreg_f2)
+    pd.DataFrame(
+        {"timeframe": [], "id_mvi": [], "irreg_type": [], "jamLevel": []}
+    ).to_parquet(irreg_f2)
 
     # COI Points
     COI_P_DIR = os.path.join(temp_data_dir, "coi_points")
@@ -272,7 +275,9 @@ def test_load_data_full(data_loader):
     # Query for 1 hour (4 * 15 min intervals)
     time_windows_to_load = [("2024-07-10 08:30:00", 1, 2)]
 
-    static_df, temporal_df = data_loader.load_data(nodes_to_load, time_windows_to_load)
+    (static_df, temporal_df), target = data_loader.load_data(
+        nodes_to_load, time_windows_to_load
+    )
 
     # Check static data
     assert len(static_df) == 2
@@ -320,13 +325,26 @@ def test_load_data_full(data_loader):
     # COI Tracts data should be 0 everywhere since the data is for 2025 (no overlap with query)
     assert (temporal_df == 0)["coi_tract_type"].sum() == len(temporal_df)
 
+    target = target.set_index(["road_id", "timeframe"])
+    # Check target values
+    # The only one with data is node 101 at 08:15
+    assert target.loc[(101, "2024-07-10 08:15:00")]["jam_level"] == 2
+    # The rest should be 0
+    assert (target == 0)["jam_level"].sum() == len(target) - 1
+    # Check that the target index matches the temporal_df index
+    assert set(target.index.get_level_values("road_id")) == set(
+        temporal_df.index.get_level_values("road_id")
+    )
+
 
 def test_load_data_no_temporal_match(data_loader):
     """Test that an empty but correctly shaped DataFrame is returned when no data is found."""
     nodes_to_load = [103]  # This node has no temporal data
     time_windows_to_load = [("2024-07-10 08:30:00", 2, 1)]
 
-    static_df, temporal_df = data_loader.load_data(nodes_to_load, time_windows_to_load)
+    (static_df, temporal_df), target = data_loader.load_data(
+        nodes_to_load, time_windows_to_load
+    )
     print("STATIC DATAFRAME:")
     print(static_df.to_markdown())
     print("TEMPORAL DATAFRAME:")
@@ -357,12 +375,14 @@ def test_load_data_no_temporal_match(data_loader):
 def test_load_data_empty_inputs(data_loader):
     """Test behavior with empty node_ids or time_windows."""
     # Empty node_ids
-    static_df, temporal_df = data_loader.load_data([], [("2024-07-10 08:00:00", 4, 0)])
+    (static_df, temporal_df), target = data_loader.load_data(
+        [], [("2024-07-10 08:00:00", 4, 0)]
+    )
     assert static_df.empty
     assert temporal_df.empty
 
     # Empty time_windows
-    static_df, temporal_df = data_loader.load_data([101], [])
+    (static_df, temporal_df), target = data_loader.load_data([101], [])
     assert len(static_df) == 1
     assert temporal_df.empty
 
@@ -373,7 +393,9 @@ def test_load_data_symmetric_window(data_loader):
     # Query for a symmetric window around a center time
     time_windows_to_load = [("2024-07-10 08:30:00", 3, 3)]  # 3 backwards, 3 forwards
 
-    static_df, temporal_df = data_loader.load_data(nodes_to_load, time_windows_to_load)
+    (static_df, temporal_df), target = data_loader.load_data(
+        nodes_to_load, time_windows_to_load
+    )
 
     # Check static data
     assert len(static_df) == 2
@@ -410,15 +432,18 @@ def test_load_data_non_matching_timeframe(
     nodes_to_load = [101, 102]
     # Query for a timeframe that does not match any data
     time_windows_to_load = [(timeframe_unmatched, 3, 3)]
-    static_df, temporal_df = data_loader.load_data(nodes_to_load, time_windows_to_load)
+    (static_df, temporal_df), target = data_loader.load_data(
+        nodes_to_load, time_windows_to_load
+    )
 
     # No data at this exact time, but it should be treated as if
     # the timeframe was rounded to the nearest 15 minutes
     target_time_windows_to_load = [(timeframe_rounded, 3, 3)]
-    target_static_df, target_temporal_df = data_loader.load_data(
+    (target_static_df, target_temporal_df), target_target = data_loader.load_data(
         nodes_to_load, target_time_windows_to_load
     )
 
     # Assert that the dataframes are the same
     pd.testing.assert_frame_equal(static_df, target_static_df)
     pd.testing.assert_frame_equal(temporal_df, target_temporal_df)
+    pd.testing.assert_frame_equal(target, target_target)
