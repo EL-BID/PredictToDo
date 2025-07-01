@@ -346,9 +346,36 @@ class GraphTimeSeriesLoader:
 
         return result_df
 
+    def _to_snake_case(self, string: str) -> str:
+        """
+        Converts a string to snake_case by:
+        - Always adding underscore after "mvi" or "MVI"
+        - Replacing non-alphanumeric with underscore
+        - Splitting camelCase
+        - Converting to lowercase
+        - Removing leading/trailing underscores
+        - Collapsing multiple underscores
+
+        Args:
+            colnames (list): A list of column names in any case format.
+
+        Returns:
+            list: A list of column names converted to snake_case.
+        """
+        string = string.replace("mvi", "mvi_").replace(
+            "MVI", "MVI_"
+        )  # Add underscore after "mvi" or "MVI"
+        string = re.sub(
+            r"[^a-zA-Z0-9]+", "_", string
+        )  # Replace non-alphanumeric with underscore
+        string = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", string)  # Split camelCase
+        string = string.lower()  # Convert to lowercase
+        string = re.sub(r"_+", "_", string)  # Collapse multiple underscores
+        return string.strip("_")
+
     def load_data(
         self, node_ids: list[str], time_windows: list[tuple[str, int, int]]
-    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    ) -> tuple[tuple[pd.DataFrame, pd.DataFrame], pd.Series]:
         """
         Loads static and temporal data, creating a dense DataFrame for temporal features.
 
@@ -366,7 +393,9 @@ class GraphTimeSeriesLoader:
         """
         if not node_ids:
             print("No node IDs provided. Returning empty DataFrames.")
-            return pd.DataFrame(), pd.DataFrame()
+            return (pd.DataFrame(), pd.DataFrame()), pd.Series(
+                dtype=np.float64, name="jamLevel"
+            )
 
         print(f"\n--- Starting data load for {len(node_ids)} nodes ---")
         # Get static data from the base graph
@@ -382,7 +411,9 @@ class GraphTimeSeriesLoader:
             print(
                 f"--- Load complete. Found {len(static_df)} static records. No temporal data requested. ---"
             )
-            return static_df, pd.DataFrame()
+            return (static_df, pd.DataFrame()), pd.Series(
+                dtype=np.float64, name="jamLevel"
+            )
 
         # Generate all expected timeframes and the master index
         all_expected_timeframes = []
@@ -509,4 +540,21 @@ class GraphTimeSeriesLoader:
         print(
             f"--- Load complete. Found {len(static_df)} static records. Temporal DF shape: {final_temporal_df.shape} ---"
         )
-        return static_df, final_temporal_df.reset_index()
+
+        # Separate temporal features from target variable (jamLevel)
+        if "jamLevel" in final_temporal_df.columns:
+            jam_target = final_temporal_df["jamLevel"]
+            final_temporal_df = final_temporal_df.drop(columns=["jamLevel"])
+        else:
+            jam_target = pd.Series(
+                dtype=np.float64, name="jamLevel", index=final_temporal_df.index
+            )
+
+        # Convert column names to snake_case
+        final_temporal_df.columns = [
+            self._to_snake_case(col) for col in final_temporal_df.columns
+        ]
+        static_df.columns = [self._to_snake_case(col) for col in static_df.columns]
+        jam_target.name = self._to_snake_case("jamLevel")
+
+        return (static_df, final_temporal_df.reset_index()), jam_target.reset_index()
