@@ -268,7 +268,6 @@ if __name__ == "__main__":
 
     # Save the final DataFrame to a pickle file
     print(f"Saving final DataFrame to {OUTPUT_FILENAME}...")
-    with open(OUTPUT_FILENAME, "wb") as f:
-        pickle.dump(final_df, f)
+    final_df.to_parquet(OUTPUT_FILENAME, index=True)
 
     print("Process finished successfully.")
