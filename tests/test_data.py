@@ -7,7 +7,7 @@ import networkx as nx
 import pandas as pd
 import pytest
 
-from src.data import GraphTimeSeriesLoader
+from src.dataloader import GraphTimeSeriesLoader
 
 
 @pytest.fixture(scope="module")
