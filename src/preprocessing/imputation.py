@@ -7,10 +7,6 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-# ==============================================================================
-# 1. DATA LOADING FUNCTIONS
-# ==============================================================================
-
 
 def load_graph(graph_path: str) -> nx.Graph:
     """Loads a graph from a pickle file."""
@@ -48,11 +44,6 @@ def load_and_process_irregularities(irregularities_dir: str) -> pd.DataFrame:
     return mean_features
 
 
-# ==============================================================================
-# 2. GRAPH ANALYSIS FUNCTIONS
-# ==============================================================================
-
-
 def get_disconnected_nodes(graph: nx.Graph) -> Set[str]:
     """Identifies all nodes not in the largest connected component."""
     print("Identifying disconnected nodes...")
@@ -83,11 +74,6 @@ def get_street_types(graph: nx.Graph) -> pd.DataFrame:
         .set_index("node_id")
     )
     return street_types_df
-
-
-# ==============================================================================
-# 3. FEATURE COMPUTATION FUNCTIONS
-# ==============================================================================
 
 
 def calculate_mean_features_by_street_type(
@@ -189,11 +175,6 @@ def impute_missing_features(
     return final_df
 
 
-# ==============================================================================
-# 4. MAIN ORCHESTRATOR FUNCTION
-# ==============================================================================
-
-
 def generate_neighbor_features_from_files(
     graph_path: str,
     irregularities_dir: str,
@@ -247,10 +228,6 @@ def generate_neighbor_features_from_files(
     return final_features_df
 
 
-# ==============================================================================
-# 5. SCRIPT EXECUTION
-# ==============================================================================
-
 if __name__ == "__main__":
     # Paths and parameters
     PROCESSED_DATA_DIR = "data/datos_procesados"
@@ -258,7 +235,7 @@ if __name__ == "__main__":
         PROCESSED_DATA_DIR, "conectivity_graph/road_graph.pickle"
     )
     IRREGULARITIES_DIR = os.path.join(PROCESSED_DATA_DIR, "irregularidades_procesadas/")
-    OUTPUT_FILENAME = os.path.join(PROCESSED_DATA_DIR, "neighbor_features.pkl")
+    OUTPUT_FILENAME = os.path.join(PROCESSED_DATA_DIR, "neighbor_features.parquet")
     K_HOPS = 10
 
     # Generate the features
