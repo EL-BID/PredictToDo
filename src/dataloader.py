@@ -555,8 +555,8 @@ class GraphTimeSeriesLoader:
         for col, mean_col in fill_map.items():
             # If the column exists but it has missing values, we fill them with the mean column
             if col in master_temporal_df.columns:
-                master_temporal_df[col].fillna(
-                    master_temporal_df[mean_col], inplace=True
+                master_temporal_df[col] = master_temporal_df[col].fillna(
+                    master_temporal_df[mean_col]
                 )
             # If the column does not exist, we create it with the mean column values
             else:
