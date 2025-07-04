@@ -403,11 +403,17 @@ class GraphTimeSeriesLoader:
                                  (timeframe, num_15_min_periods_forwards, num_15_min_periods_backwards).
 
         Returns:
-            tuple: A tuple containing two DataFrames:
-                   - static_df (pd.DataFrame): Static attributes for the requested nodes.
-                   - temporal_df (pd.DataFrame): A dense DataFrame with all temporal features,
-                                                 indexed by (road_id, timeframe), with missing
-                                                 values filled with 0.
+            tuple: A tuple containing:
+                - A tuple of DataFrames: (static_df, temporal_df)
+                    - static_df (pd.DataFrame): Static attributes for the requested nodes.
+                    - temporal_df (pd.DataFrame): A dense DataFrame with all temporal features,
+                                                  indexed by (road_id, timeframe), with missing
+                                                  values filled with 0. (except for trend, speed,
+                                                  and regularSpeed which are filled with mean values 
+                                                  of neighboring nodes)
+                - A target DataFrame: jam_target
+                    - jam_target (pd.DataFrame): The target variable 'jam_level',
+                                                 indexed by (road_id, timeframe).
         """
         if not node_ids:
             print("No node IDs provided. Returning empty DataFrames.")
