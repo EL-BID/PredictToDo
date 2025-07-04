@@ -6,61 +6,61 @@ from datetime import timedelta
 
 import numpy as np
 import pandas as pd
+import torch
 from torch.utils.data import Dataset
 
 
-class GNNTimeSeriesDataset(Dataset):
-    def __init__(self, loader, base_graph, samples, num_neighbors=10, history_length=8):
+class GraphTimeSeriesDataset(Dataset):
+    """
+    A custom PyTorch Dataset that wraps the GraphTimeSeriesLoader.
+
+    This dataset holds the node IDs and time windows, and for each sample,
+    it retrieves the corresponding graph data using the provided loader.
+    """
+
+    def __init__(
+        self,
+        loader: "GraphTimeSeriesLoader",
+        node_ids: list[str],
+        time_windows: list[tuple[str, int, int]],
+    ):
         """
-        A PyTorch Dataset that wraps the GraphTimeSeriesLoader.
+        Initializes the GraphDataset.
 
         Args:
-            loader (GraphTimeSeriesLoader): The initialized data loader.
-            base_graph (nx.DiGraph): The base graph, used for neighborhood sampling.
-            samples (list): A list of training samples, e.g., tuples of (node_id, start_time_str).
-            num_neighbors (int): The number of neighbors to sample for each root node.
-            history_length (int): The number of 15-minute intervals to fetch for the time window.
+            loader (GraphTimeSeriesLoader): An instance of the custom data loader.
+            node_ids (list[str]): The list of all node IDs in the dataset.
+            time_windows (list[tuple[str, int, int]]): The list of all time windows.
         """
         self.loader = loader
-        self.base_graph = base_graph
-        self.samples = samples
-        self.num_neighbors = num_neighbors
-        self.history_length = history_length
+        self.node_ids = node_ids
+        self.time_windows = time_windows
 
-    def __len__(self):
-        """Returns the total number of samples."""
-        return len(self.samples)
+    def __len__(self) -> int:
+        """Returns the total number of samples in the dataset."""
+        return len(self.time_windows)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Fetches one training sample, processes it, and returns it as tensors.
+        Retrieves a single sample from the dataset at the given index.
+
+        A sample consists of the data for all nodes at a specific time window.
         """
-        # Get the root node and start time for this sample
-        root_node, start_time = self.samples[idx]
+        # Get the specific time window for this sample
+        time_window = [self.time_windows[idx]]
 
-        # Perform neighborhood sampling
-        neighbors = list(
-            self.base_graph.predecessors(root_node)
-        )  # Or successors, or both
-        if len(neighbors) > self.num_neighbors:
-            # If too many neighbors, sample a fixed number
-            neighbors = np.random.choice(
-                neighbors, self.num_neighbors, replace=False
-            ).tolist()
-
-        subgraph_nodes = [root_node] + neighbors
-
-        # Use the loader to get data for the subgraph
-        # The time window is defined by the start_time and the desired history length
-        time_window = [(start_time, self.history_length)]
-
-        static_df, temporal_df = self.loader.load_data(
-            node_ids=subgraph_nodes, time_windows=time_window
+        # Use the loader to fetch the data for all nodes at this time window
+        (static_df, temporal_df), jam_target = self.loader.load_data(
+            self.node_ids, time_window
         )
 
-        # TODO: The output must be converted into the tensor format that the GNN needs
-        # This part is highly specific to the GNN library (PyG, DGL, etc.)
-        return static_df, temporal_df
+        # Convert the pandas DataFrames to PyTorch tensors
+        # TODO: The exact conversion logic will depend on the GNN model's input requirements
+        static_tensor = torch.tensor(static_df.values, dtype=torch.float32)
+        temporal_tensor = torch.tensor(temporal_df.values, dtype=torch.float32)
+        target_tensor = torch.tensor(jam_target.values, dtype=torch.float32)
+
+        return static_tensor, temporal_tensor, target_tensor
 
 
 class GraphTimeSeriesLoader:
@@ -409,7 +409,7 @@ class GraphTimeSeriesLoader:
                     - temporal_df (pd.DataFrame): A dense DataFrame with all temporal features,
                                                   indexed by (road_id, timeframe), with missing
                                                   values filled with 0. (except for trend, speed,
-                                                  and regularSpeed which are filled with mean values 
+                                                  and regularSpeed which are filled with mean values
                                                   of neighboring nodes)
                 - A target DataFrame: jam_target
                     - jam_target (pd.DataFrame): The target variable 'jam_level',
