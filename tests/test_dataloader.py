@@ -105,6 +105,9 @@ def file_paths(temp_data_dir: str) -> dict[str, str | list[str]]:
         {
             "timeframe": pd.to_datetime(["2024-07-10 08:15:00"]),
             "id_mvi": [101],
+            "speed": [85.5],
+            "regularSpeed": [90.0],
+            "trend": [1.2],
             "irreg_type": [0.9],
             "jamLevel": [2],
         }
@@ -143,6 +146,17 @@ def file_paths(temp_data_dir: str) -> dict[str, str | list[str]]:
     coi_t_f1 = os.path.join(COI_T_DIR, "coi_tramo_dataset_20250701_20250731.parquet")
     coi_t_df.to_parquet(coi_t_f1)
 
+    # Default speeds DataFrame
+    default_speeds_filename = os.path.join(temp_data_dir, "default_speeds.parquet")
+    default_speeds_df = pd.DataFrame(
+        {
+            "road_id": [101, 102, 103],
+            "mean_trend": [1.0, 0.9, 0.8],
+            "mean_regularSpeed": [88.0, 77.0, 66.0],
+        }
+    ).set_index("road_id")
+    default_speeds_df.to_parquet(default_speeds_filename)
+
     return {
         "graph_pkl_filename": graph_filename,
         "buildings_csv_filename": buildings_filename,
@@ -153,6 +167,7 @@ def file_paths(temp_data_dir: str) -> dict[str, str | list[str]]:
         "irregularities_filenames": [irreg_f1, irreg_f2],
         "coi_points_filenames": [coi_p_f1],
         "coi_tracts_filenames": [coi_t_f1],
+        "default_speeds_parquet_filename": default_speeds_filename,
     }
 
 
@@ -168,6 +183,7 @@ def data_loader(file_paths: dict[str, str | list[str]]) -> GraphTimeSeriesLoader
     assert isinstance(file_paths["irregularities_filenames"], list)
     assert isinstance(file_paths["coi_points_filenames"], list)
     assert isinstance(file_paths["coi_tracts_filenames"], list)
+    assert isinstance(file_paths["default_speeds_parquet_filename"], str)
 
     return GraphTimeSeriesLoader(
         graph_pkl_filename=file_paths["graph_pkl_filename"],
@@ -179,6 +195,7 @@ def data_loader(file_paths: dict[str, str | list[str]]) -> GraphTimeSeriesLoader
         irregularities_filenames=file_paths["irregularities_filenames"],
         coi_points_filenames=file_paths["coi_points_filenames"],
         coi_tracts_filenames=file_paths["coi_tracts_filenames"],
+        default_speeds_parquet_filename=file_paths["default_speeds_parquet_filename"],
     )
 
 
@@ -281,7 +298,10 @@ def test_load_data_full(data_loader):
 
     # Check static data
     assert len(static_df) == 2
-    assert static_df.index.tolist() == [101, 102]
+    assert static_df["road_id"].tolist() == [101, 102]
+    # Set static_df index to road_id for easier access
+    static_df = static_df.set_index("road_id")
+    # Check static values
     assert static_df.loc[101]["stop_type_1"] == 0
     assert static_df.loc[101]["stop_type_2"] == 1
     assert static_df.loc[102]["stop_type_2"] == 0
@@ -295,7 +315,6 @@ def test_load_data_full(data_loader):
     # Check specific data points
     # Set multi-index for easy lookup
     temporal_df = temporal_df.set_index(["road_id", "timeframe"])
-    print(temporal_df.to_markdown())
     # All the events data should be present in the temporal_df since we queried for 4 timeframes
     assert temporal_df.loc[(101, "2024-07-10 08:00:00")]["congestion_level"] == 1
     assert temporal_df.loc[(102, "2024-07-10 08:15:00")]["congestion_level"] == 2
@@ -324,6 +343,8 @@ def test_load_data_full(data_loader):
     assert (temporal_df == 0)["coi_point_type"].sum() == len(temporal_df) - 1
     # COI Tracts data should be 0 everywhere since the data is for 2025 (no overlap with query)
     assert (temporal_df == 0)["coi_tract_type"].sum() == len(temporal_df)
+    # Check a specific data point's speed that was filled by default
+    assert temporal_df.loc[(102, "2024-07-10 08:45:00")]["speed"] == 77.0
 
     target = target.set_index(["road_id", "timeframe"])
     # Check target values
@@ -337,6 +358,41 @@ def test_load_data_full(data_loader):
     )
 
 
+def test_load_data_with_default_fill(data_loader):
+    """Test the special filling logic for speed and trend columns."""
+    nodes_to_load = [101, 102, 103]
+    # Window covers the irregularity data at 08:15 and 08:30
+    time_windows_to_load = [("2024-07-10 08:15:00", 1, 0)]
+
+    (static_df, temporal_df), target = data_loader.load_data(
+        nodes_to_load, time_windows_to_load
+    )
+    temporal_df = temporal_df.set_index(["road_id", "timeframe"])
+
+    # Node 101 at 08:15 had actual data, so it should be preserved
+    assert temporal_df.loc[(101, "2024-07-10 08:15:00")]["speed"] == 85.5
+    assert temporal_df.loc[(101, "2024-07-10 08:15:00")]["regular_speed"] == 90.0
+    assert temporal_df.loc[(101, "2024-07-10 08:15:00")]["trend"] == 1.2
+
+    # Node 102 at 08:30 had missing data, so it should be filled from the defaults file
+    # Default for node 102 is mean_regularSpeed=77.0 and mean_trend=0.9
+    assert temporal_df.loc[(102, "2024-07-10 08:30:00")]["speed"] == 77.0
+    assert temporal_df.loc[(102, "2024-07-10 08:30:00")]["regular_speed"] == 77.0
+    assert temporal_df.loc[(102, "2024-07-10 08:30:00")]["trend"] == 0.9
+
+    # Node 103 had no irregularity data, so it should also be filled
+    # Default for node 103 is mean_regularSpeed=66.0 and mean_trend=0.8
+    assert temporal_df.loc[(103, "2024-07-10 08:30:00")]["speed"] == 66.0
+    assert temporal_df.loc[(103, "2024-07-10 08:30:00")]["regular_speed"] == 66.0
+    assert temporal_df.loc[(103, "2024-07-10 08:30:00")]["trend"] == 0.8
+
+    # A row that had no irregularity data at all (e.g., node 101 at 08:30) should also be filled
+    # Default for node 101 is mean_regularSpeed=88.0 and mean_trend=1.0
+    assert temporal_df.loc[(101, "2024-07-10 08:30:00")]["speed"] == 88.0
+    assert temporal_df.loc[(101, "2024-07-10 08:30:00")]["regular_speed"] == 88.0
+    assert temporal_df.loc[(101, "2024-07-10 08:30:00")]["trend"] == 1.0
+
+
 def test_load_data_no_temporal_match(data_loader):
     """Test that an empty but correctly shaped DataFrame is returned when no data is found."""
     nodes_to_load = [103]  # This node has no temporal data
@@ -345,13 +401,9 @@ def test_load_data_no_temporal_match(data_loader):
     (static_df, temporal_df), target = data_loader.load_data(
         nodes_to_load, time_windows_to_load
     )
-    print("STATIC DATAFRAME:")
-    print(static_df.to_markdown())
-    print("TEMPORAL DATAFRAME:")
-    print(temporal_df.to_markdown())
 
     assert len(static_df) == 1
-    assert static_df.index.tolist() == [103]
+    assert static_df["road_id"].tolist() == [103]
     assert len(temporal_df) == 4  # 1 node * 4 timeframes
 
     # All temporal feature columns should be present and filled with 0
@@ -367,9 +419,22 @@ def test_load_data_no_temporal_match(data_loader):
     }
     assert expected_cols.issubset(temporal_df.columns)
 
-    # Check if all values (except id/time) are 0
+    # Check if all values (except id/time) are 0 apart from
+    # the non-zeroable columns (trend, speed, regular_speed)
     feature_cols = temporal_df.drop(columns=["road_id", "timeframe"])
-    assert (feature_cols.values == 0).all()
+    non_zeroable_cols = ["trend", "speed", "regular_speed"]
+    zeroable_cols = [
+        col for col in feature_cols.columns if col not in non_zeroable_cols
+    ]
+    assert (feature_cols[zeroable_cols] == 0).all().all()
+    # Check that the non-zeroable columns are also present and are correctly filled
+    expected_values = {
+        "trend": 0.8,  # Default trend for node 103
+        "speed": 66.0,  # Default speed for node 103
+        "regular_speed": 66.0,  # Default regular speed for node 103
+    }
+    for col in non_zeroable_cols:
+        assert (feature_cols[col] == expected_values[col]).all()
 
 
 def test_load_data_empty_inputs(data_loader):
@@ -399,7 +464,7 @@ def test_load_data_symmetric_window(data_loader):
 
     # Check static data
     assert len(static_df) == 2
-    assert static_df.index.tolist() == [101, 102]
+    assert static_df["road_id"].tolist() == [101, 102]
 
     # Check temporal data shape and index
     assert len(temporal_df) == 14  # 2 nodes * (3 back + 1 center + 3 forward)
@@ -408,7 +473,6 @@ def test_load_data_symmetric_window(data_loader):
 
     # Check specific data points
     temporal_df = temporal_df.set_index(["road_id", "timeframe"])
-    print(temporal_df.to_markdown())
     # Check that the timeframes are correctly expanded
     expected_timeframes = pd.date_range(
         start="2024-07-10 07:45:00", end="2024-07-10 09:15:00", freq="15min"
