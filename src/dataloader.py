@@ -1,6 +1,7 @@
 import os
 import pickle as pkl
 import re
+import warnings
 from datetime import timedelta
 
 import numpy as np
@@ -79,6 +80,7 @@ class GraphTimeSeriesLoader:
         irregularities_files (list): A list of tuples (start_date, end_date, filepath) for irregularity data.
         coi_points_files (list): A list of tuples for COI points data.
         coi_tracts_files (list): A list of tuples for COI tracts data.
+        default_speeds_df (pd.DataFrame): DataFrame with default speed and trend values for nodes.
     """
 
     def __init__(
@@ -92,19 +94,32 @@ class GraphTimeSeriesLoader:
         irregularities_filenames: list[str],
         coi_points_filenames: list[str],
         coi_tracts_filenames: list[str],
+        default_speeds_parquet_filename: str,
     ):
         """
         Initializes the GraphTimeSeriesLoader with all data sources.
 
         Args:
             base_graph (nx.DiGraph): The base graph with node attributes.
-            events_df (pd.DataFrame): DataFrame containing event data. Must have 'road_id' and 'timeframe' columns.
-            incidents_df (pd.DataFrame): DataFrame with incident data. Must have 'road_id' and 'timeframe' columns.
+
+            events_df (pd.DataFrame): DataFrame containing event data. Must have 'road_id'
+            and 'timeframe' columns.
+
+            incidents_df (pd.DataFrame): DataFrame with incident data. Must have 'road_id'
+            and 'timeframe' columns.
+
             road_state_df (pd.DataFrame): DataFrame with road state data. Must have 'road_id',
-                                          'timeframe_start', and 'timeframe_end' columns.
+            'timeframe_start', and 'timeframe_end' columns.
+
             irregularities_filenames (list): List of file paths for irregularity parquet files.
+
             coi_points_filenames (list): List of file paths for COI points parquet files.
+
             coi_tracts_filenames (list): List of file paths for COI tracts parquet files.
+
+            default_speeds_parquet_filename (str): Path to the Parquet file with default speeds
+            and trends. Must have columns 'mean_trend' and 'mean_regularSpeed'. The index must
+            correspond to the node IDs in the base graph.
         """
         with open(graph_pkl_filename, "rb") as f:
             base_graph = pkl.load(f)
@@ -133,6 +148,9 @@ class GraphTimeSeriesLoader:
         self.events_df = pd.read_csv(events_csv_filename)
         self.incidents_df = pd.read_csv(incidents_csv_filename)
         self.road_state_df = pd.read_parquet(road_state_parquet_filename)
+
+        # Load the default speeds and trends, assuming index is the node ID
+        self.default_speeds_df = pd.read_parquet(default_speeds_parquet_filename)
 
         # Ensure time columns are in datetime format for efficient filtering
         self.events_df["timeframe"] = pd.to_datetime(self.events_df["timeframe"])
@@ -375,7 +393,7 @@ class GraphTimeSeriesLoader:
 
     def load_data(
         self, node_ids: list[str], time_windows: list[tuple[str, int, int]]
-    ) -> tuple[tuple[pd.DataFrame, pd.DataFrame], pd.Series]:
+    ) -> tuple[tuple[pd.DataFrame, pd.DataFrame], pd.DataFrame]:
         """
         Loads static and temporal data, creating a dense DataFrame for temporal features.
 
@@ -393,9 +411,7 @@ class GraphTimeSeriesLoader:
         """
         if not node_ids:
             print("No node IDs provided. Returning empty DataFrames.")
-            return (pd.DataFrame(), pd.DataFrame()), pd.Series(
-                dtype=np.float64, name="jamLevel"
-            )
+            return (pd.DataFrame(), pd.DataFrame()), pd.DataFrame()
 
         print(f"\n--- Starting data load for {len(node_ids)} nodes ---")
         # Get static data from the base graph
@@ -411,9 +427,7 @@ class GraphTimeSeriesLoader:
             print(
                 f"--- Load complete. Found {len(static_df)} static records. No temporal data requested. ---"
             )
-            return (static_df, pd.DataFrame()), pd.Series(
-                dtype=np.float64, name="jamLevel"
-            )
+            return (static_df, pd.DataFrame()), pd.DataFrame()
 
         # Generate all expected timeframes and the master index
         all_expected_timeframes = []
@@ -528,33 +542,86 @@ class GraphTimeSeriesLoader:
                 expanded_state_df.set_index(["road_id", "timeframe"]), how="left"
             )
 
-        # Fill missing values and complete with all the expected columns
-        final_temporal_df = master_temporal_df.fillna(0)
+        # Now we must fill missing values and complete with all the expected columns
+        # First we deal with the non-zeroable columns (trend, speed and regularSpeed)
+        master_temporal_df = master_temporal_df.merge(
+            self.default_speeds_df, left_on="road_id", right_index=True, how="left"
+        )
+        fill_map = {
+            "trend": "mean_trend",
+            "speed": "mean_regularSpeed",
+            "regularSpeed": "mean_regularSpeed",
+        }
+        for col, mean_col in fill_map.items():
+            # If the column exists but it has missing values, we fill them with the mean column
+            if col in master_temporal_df.columns:
+                master_temporal_df[col].fillna(
+                    master_temporal_df[mean_col], inplace=True
+                )
+            # If the column does not exist, we create it with the mean column values
+            else:
+                master_temporal_df[col] = master_temporal_df[mean_col].copy()
+        # Drop the helper mean columns
+        master_temporal_df.drop(
+            columns=["mean_trend", "mean_regularSpeed"], inplace=True, errors="ignore"
+        )
+
+        # Fill the rest of the missing values with 0
+        master_temporal_df = master_temporal_df.fillna(0)
+
+        # Ensure all expected columns are present
+        # We fill all columns that are expected but not present in the final DataFrame
+        # with 0, so that the final DataFrame has all the expected columns
         for column_names in self.column_names.values():
             for col in column_names:
-                if col not in final_temporal_df.columns:
-                    final_temporal_df[col] = 0
-        # The columns 'road_id' and 'timeframe' are not needed in the final DataFrame since they are the index
-        final_temporal_df.drop(columns=["road_id", "timeframe"], inplace=True)
+                if col not in master_temporal_df.columns:
+                    master_temporal_df[col] = 0
 
         print(
-            f"--- Load complete. Found {len(static_df)} static records. Temporal DF shape: {final_temporal_df.shape} ---"
+            f"--- Load complete. Found {len(static_df)} static records. Temporal DF shape: {master_temporal_df.shape} ---"
         )
 
         # Separate temporal features from target variable (jamLevel)
-        if "jamLevel" in final_temporal_df.columns:
-            jam_target = final_temporal_df["jamLevel"]
-            final_temporal_df = final_temporal_df.drop(columns=["jamLevel"])
+        if "jamLevel" in master_temporal_df.columns:
+            jam_target = master_temporal_df["jamLevel"]
+            master_temporal_df = master_temporal_df.drop(columns=["jamLevel"])
         else:
             jam_target = pd.Series(
-                dtype=np.float64, name="jamLevel", index=final_temporal_df.index
+                dtype=np.float64, name="jamLevel", index=master_temporal_df.index
             )
 
         # Convert column names to snake_case
-        final_temporal_df.columns = [
-            self._to_snake_case(col) for col in final_temporal_df.columns
+        master_temporal_df.columns = [
+            self._to_snake_case(col) for col in master_temporal_df.columns
         ]
         static_df.columns = [self._to_snake_case(col) for col in static_df.columns]
         jam_target.name = self._to_snake_case("jamLevel")
 
-        return (static_df, final_temporal_df.reset_index()), jam_target.reset_index()
+        # static_df already has a 'id_mvi' column and a 'road_id' column,
+        # so we can drop the index and drop the 'id_mvi' column
+        static_df = static_df.reset_index(drop=True).drop(
+            columns=["id_mvi"], errors="ignore"
+        )
+        # Put it first for consistency
+        static_df = static_df[
+            ["road_id"] + [col for col in static_df.columns if col != "road_id"]
+        ]
+        # We drop the 'road_id' and 'timeframe' columns from the temporal DataFrame
+        # since they are already in the index
+        master_temporal_df = master_temporal_df.drop(
+            columns=["road_id", "timeframe"], errors="ignore"
+        )
+        # We reset the indices to match the static DataFrame
+        master_temporal_df = master_temporal_df.reset_index()
+        jam_target = jam_target.reset_index()
+
+        if len(jam_target) != len(master_temporal_df):
+            warnings.warn("jam_target length does not match master_temporal_df length.")
+        if set(static_df["road_id"]) != set(master_temporal_df["road_id"]):
+            warnings.warn(
+                "Static DataFrame road_id set does not match temporal DataFrame road_id set."
+            )
+        if not jam_target.index.equals(master_temporal_df.index):
+            warnings.warn("jam_target index does not match master_temporal_df index.")
+
+        return (static_df, master_temporal_df), jam_target
