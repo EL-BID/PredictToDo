@@ -1,9 +1,9 @@
 import os
 import pickle as pkl
 import re
-import warnings
 from datetime import timedelta
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 import torch
@@ -86,8 +86,6 @@ class GraphTimeSeriesLoader:
     def __init__(
         self,
         graph_pkl_filename: str,
-        buildings_csv_filename: str,
-        bus_stops_parquet_filename: str,
         events_csv_filename: str,
         incidents_csv_filename: str,
         road_state_parquet_filename: str,
@@ -123,26 +121,16 @@ class GraphTimeSeriesLoader:
         """
         with open(graph_pkl_filename, "rb") as f:
             base_graph = pkl.load(f)
-        all_nodes = list(base_graph.nodes(data=False))
-        all_nodes_df = pd.DataFrame(all_nodes, columns=["road_id"])
 
-        # Many nodes are missing in the buildings dataframe, so we join on road_id
-        # and fill missing values with 0
-        buildings_df = pd.read_csv(buildings_csv_filename)
-        buildings_df = buildings_df.merge(
-            all_nodes_df, on="road_id", how="right"
-        ).fillna(0)
-        # We do the same with the bus stops dataframe
-        bus_stops_df = pd.read_parquet(bus_stops_parquet_filename)
-        bus_stops_df = bus_stops_df.merge(
-            all_nodes_df, on="road_id", how="right"
-        ).fillna(0)
-
-        self.base_graph = base_graph
-        # Update the base graph nodes with the buildings data
-        self._add_node_attributes(buildings_df, node_id_col="road_id")
-        # Update the base graph nodes with the bus stops data
-        self._add_node_attributes(bus_stops_df, node_id_col="road_id")
+        # Clean the base graph node attributes
+        self.base_graph = self._clean_node_attributes(base_graph)
+        self.static_node_data = pd.DataFrame.from_dict(
+            dict(self.base_graph.nodes(data=True)), orient="index"
+        )
+        self.static_node_data.columns = [
+            self._to_snake_case(col) for col in self.static_node_data.columns
+        ]
+        self.static_node_data.index.name = "road_id"
 
         # Load temporal data from CSV and Parquet files
         self.events_df = pd.read_csv(events_csv_filename)
@@ -204,25 +192,137 @@ class GraphTimeSeriesLoader:
             sample_coi_tracts_df = pd.read_parquet(self.coi_tracts_files[0][2])
             self.column_names["coi_tracts"] = sample_coi_tracts_df.columns.tolist()
 
-    def _add_node_attributes(self, df: pd.DataFrame, node_id_col: str) -> None:
+    def _clean_node_attributes(self, base_graph: nx.DiGraph) -> nx.DiGraph:
         """
-        Adds static node attributes to a DataFrame based on the base graph.
+        Cleans the node attributes DataFrame by dropping unnecessary columns and
+        ensuring the remaining columns are in the correct format.
 
         Args:
-            df (pd.DataFrame): The DataFrame to which attributes will be added.
-            node_id_col (str): The name of the column containing node IDs in the DataFrame.
+            base_graph (nx.DiGraph): The base graph with raw node attributes.
 
         Returns:
-            pd.DataFrame: The DataFrame with static attributes added.
+            nx.DiGraph: A new graph with cleaned node attributes.
         """
-        if node_id_col not in df.columns:
-            raise ValueError(f"Column '{node_id_col}' not found in DataFrame.")
+        all_nodes_df = pd.DataFrame.from_dict(
+            dict(base_graph.nodes(data=True)), orient="index"
+        )
 
-        # Add static attributes to the base graph
-        for _, row in df.iterrows():
-            node_id = row[node_id_col]
-            if node_id in self.base_graph.nodes:
-                self.base_graph.nodes[node_id].update(row.to_dict())
+        # Information about the columns with MIV can be found at:
+        # https://www.ideca.gov.co/sites/default/files/2019-05/CatalogoObjetosMRV6.0.pdf
+
+        node_attr_to_drop = [
+            "id_mvi",  # It's already the node ID
+            "MVICODIGO",
+            "MVICCALZAD",
+            "MVICIV",
+            "MVICCAT",
+            "MVINOMBRE",
+            "MVINALTERN",
+            "MVINPRINCI",
+            "MVINGENERA",
+            "MVINANTIGU",
+            "MVIETIQUET",
+            "MVISVIA",
+            "OBJECTID",
+            "contador",
+            "cardinal",
+            "sx",
+            "sy",
+            "ex",
+            "ey",
+            "buildings_yes",
+            "buildings_yesmm",
+        ] + [
+            "bus_stop_mean_distance_meters",
+            "bus_stop_median_distance_meters",
+        ]
+
+        node_attr_to_category = [
+            "MVITCLA",  # It's an int but should be treated as a category
+            "MVITIPO",  # It's a string, should replace "Null" and " " with the same value
+            "MVIVELREG",  # Max speed, it's either [30, 50, "Null"], better to treat as category
+        ]
+
+        node_attr_num = [
+            "MVINUMC",  # Number of lanes, int
+            "length_m",
+        ] + [
+            col
+            for col in all_nodes_df.columns
+            if col.startswith("land_use_")
+            or (
+                col.startswith("bus_stop_")
+                and col
+                not in {
+                    "bus_stop_mean_distance_meters",
+                    "bus_stop_median_distance_meters",
+                }
+            )
+            or col.startswith("population_")
+            or (
+                col.startswith("buildings_")
+                and col not in {"buildings_yes", "buildings_yesmm"}
+            )
+        ]
+
+        # assert set(all_nodes_df.drop(columns=node_attr_to_drop).columns) == set(
+        #     node_attr_to_category + node_attr_num
+        # )
+
+        node_attr_to_drop = [
+            col for col in node_attr_to_drop if col in all_nodes_df.columns
+        ]
+        node_attr_to_category = [
+            col for col in node_attr_to_category if col in all_nodes_df.columns
+        ]
+        node_attr_num = [col for col in node_attr_num if col in all_nodes_df.columns]
+
+        clean_node_attr_df = (
+            all_nodes_df
+            # Drop the columns that are not needed
+            .drop(node_attr_to_drop, axis=1)
+            # Convert both to the same type of Null
+            .replace({"MVITIPO": {" ": "Null"}})
+            # Replace the "Null" string with None
+            .replace({"Null": None})
+            # Convert the columns to the correct types
+            .astype(
+                {col: "category" for col in node_attr_to_category}
+                | {col: "float32" for col in node_attr_num}
+            )
+            # Fill the NaN values with 0 for the numerical columns
+            .fillna({col: 0 for col in node_attr_num})
+            # One-hot encode the categorical columns
+            .pipe(
+                lambda df: pd.get_dummies(
+                    df,
+                    columns=node_attr_to_category,
+                    prefix=node_attr_to_category,
+                    prefix_sep="_",
+                    drop_first=False,
+                    dummy_na=True,
+                )
+            )
+        )
+        # Convert bool columns to int
+        clean_node_attr_df = clean_node_attr_df.astype(
+            {
+                col: "int8"
+                for col in clean_node_attr_df.select_dtypes(include=["bool"]).columns
+            }
+        )
+
+        new_graph = nx.DiGraph()
+        new_graph.add_nodes_from(base_graph.nodes)
+        new_graph.add_edges_from(base_graph.edges(data=True))
+
+        # Convert the DataFrame to the required dictionary format
+        new_node_attributes = clean_node_attr_df.to_dict("index")
+
+        # Set the new attributes on the new graph
+        nx.set_node_attributes(new_graph, new_node_attributes)
+
+        return new_graph
 
     def _preprocess_filenames(
         self, filenames: list[str], pattern: str, date_format: str = "%Y-%m-%d"
@@ -393,7 +493,7 @@ class GraphTimeSeriesLoader:
 
     def load_data(
         self, node_ids: list[str], time_windows: list[tuple[str, int, int]]
-    ) -> tuple[tuple[pd.DataFrame, pd.DataFrame], pd.DataFrame]:
+    ) -> tuple[tuple[pd.DataFrame, pd.DataFrame], pd.Series]:
         """
         Loads static and temporal data, creating a dense DataFrame for temporal features.
 
@@ -412,28 +512,23 @@ class GraphTimeSeriesLoader:
                                                   and regularSpeed which are filled with mean values
                                                   of neighboring nodes)
                 - A target DataFrame: jam_target
-                    - jam_target (pd.DataFrame): The target variable 'jam_level',
-                                                 indexed by (road_id, timeframe).
+                    - jam_target (pd.Series): The target variable 'jam_level',
+                                              indexed by (road_id, timeframe).
         """
         if not node_ids:
             print("No node IDs provided. Returning empty DataFrames.")
-            return (pd.DataFrame(), pd.DataFrame()), pd.DataFrame()
+            return (pd.DataFrame(), pd.DataFrame()), pd.Series()
 
         print(f"\n--- Starting data load for {len(node_ids)} nodes ---")
+
         # Get static data from the base graph
-        static_data = []
-        for node_id in node_ids:
-            if self.base_graph.has_node(node_id):
-                attrs = self.base_graph.nodes[node_id].copy()
-                attrs["node_id"] = node_id
-                static_data.append(attrs)
-        static_df = pd.DataFrame(static_data).set_index("node_id")
+        static_df = self.static_node_data.loc[node_ids]
 
         if not time_windows:
             print(
                 f"--- Load complete. Found {len(static_df)} static records. No temporal data requested. ---"
             )
-            return (static_df, pd.DataFrame()), pd.DataFrame()
+            return (static_df, pd.DataFrame()), pd.Series()
 
         # Generate all expected timeframes and the master index
         all_expected_timeframes = []
@@ -600,34 +695,25 @@ class GraphTimeSeriesLoader:
         master_temporal_df.columns = [
             self._to_snake_case(col) for col in master_temporal_df.columns
         ]
-        static_df.columns = [self._to_snake_case(col) for col in static_df.columns]
         jam_target.name = self._to_snake_case("jamLevel")
 
-        # static_df already has a 'id_mvi' column and a 'road_id' column,
-        # so we can drop the index and drop the 'id_mvi' column
-        static_df = static_df.reset_index(drop=True).drop(
-            columns=["id_mvi"], errors="ignore"
-        )
-        # Put it first for consistency
-        static_df = static_df[
-            ["road_id"] + [col for col in static_df.columns if col != "road_id"]
-        ]
         # We drop the 'road_id' and 'timeframe' columns from the temporal DataFrame
         # since they are already in the index
         master_temporal_df = master_temporal_df.drop(
             columns=["road_id", "timeframe"], errors="ignore"
         )
-        # We reset the indices to match the static DataFrame
-        master_temporal_df = master_temporal_df.reset_index()
-        jam_target = jam_target.reset_index()
+        # # We reset the indices to have 'road_id' and 'timeframe' as columns
+        # static_df = static_df.reset_index()
+        # master_temporal_df = master_temporal_df.reset_index()
+        # jam_target = jam_target.reset_index()
 
-        if len(jam_target) != len(master_temporal_df):
-            warnings.warn("jam_target length does not match master_temporal_df length.")
-        if set(static_df["road_id"]) != set(master_temporal_df["road_id"]):
-            warnings.warn(
-                "Static DataFrame road_id set does not match temporal DataFrame road_id set."
-            )
-        if not jam_target.index.equals(master_temporal_df.index):
-            warnings.warn("jam_target index does not match master_temporal_df index.")
+        # if len(jam_target) != len(master_temporal_df):
+        #     warnings.warn("jam_target length does not match master_temporal_df length.")
+        # if set(static_df["road_id"]) != set(master_temporal_df["road_id"]):
+        #     warnings.warn(
+        #         "Static DataFrame road_id set does not match temporal DataFrame road_id set."
+        #     )
+        # if not jam_target.index.equals(master_temporal_df.index):
+        #     warnings.warn("jam_target index does not match master_temporal_df index.")
 
         return (static_df, master_temporal_df), jam_target
