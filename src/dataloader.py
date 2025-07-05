@@ -37,6 +37,17 @@ class GraphTimeSeriesDataset(Dataset):
         """
         self.loader = loader
         self.node_ids = node_ids
+
+        # Ensure that all time windows have the same length
+        time_window_lengths = [
+            num_forwards + num_backwards + 1
+            for _, num_forwards, num_backwards in time_windows
+        ]
+        if len(set(time_window_lengths)) != 1:
+            raise ValueError(
+                "All time windows must have the same length when initializing a GraphTimeSeriesDataset. "
+                "Otherwise, PyTorch's stacking will fail when building batches."
+            )
         self.time_windows = time_windows
 
     def __len__(self) -> int:
