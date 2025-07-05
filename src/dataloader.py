@@ -2,12 +2,15 @@ import os
 import pickle as pkl
 import re
 from datetime import timedelta
+from warnings import simplefilter
 
 import networkx as nx
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
+
+simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
 
 class GraphTimeSeriesDataset(Dataset):
