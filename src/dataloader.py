@@ -2,64 +2,79 @@ import os
 import pickle as pkl
 import re
 from datetime import timedelta
+from warnings import simplefilter
 
+import networkx as nx
 import numpy as np
 import pandas as pd
+import torch
 from torch.utils.data import Dataset
 
+simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
-class GNNTimeSeriesDataset(Dataset):
-    def __init__(self, loader, base_graph, samples, num_neighbors=10, history_length=8):
+
+class GraphTimeSeriesDataset(Dataset):
+    """
+    A custom PyTorch Dataset that wraps the GraphTimeSeriesLoader.
+
+    This dataset holds the node IDs and time windows, and for each sample,
+    it retrieves the corresponding graph data using the provided loader.
+    """
+
+    def __init__(
+        self,
+        loader: "GraphTimeSeriesLoader",
+        node_ids: list[str],
+        time_windows: list[tuple[str, int, int]],
+    ):
         """
-        A PyTorch Dataset that wraps the GraphTimeSeriesLoader.
+        Initializes the GraphDataset.
 
         Args:
-            loader (GraphTimeSeriesLoader): The initialized data loader.
-            base_graph (nx.DiGraph): The base graph, used for neighborhood sampling.
-            samples (list): A list of training samples, e.g., tuples of (node_id, start_time_str).
-            num_neighbors (int): The number of neighbors to sample for each root node.
-            history_length (int): The number of 15-minute intervals to fetch for the time window.
+            loader (GraphTimeSeriesLoader): An instance of the custom data loader.
+            node_ids (list[str]): The list of all node IDs in the dataset.
+            time_windows (list[tuple[str, int, int]]): The list of all time windows.
         """
         self.loader = loader
-        self.base_graph = base_graph
-        self.samples = samples
-        self.num_neighbors = num_neighbors
-        self.history_length = history_length
+        self.node_ids = node_ids
 
-    def __len__(self):
-        """Returns the total number of samples."""
-        return len(self.samples)
+        # Ensure that all time windows have the same length
+        time_window_lengths = [
+            num_forwards + num_backwards + 1
+            for _, num_forwards, num_backwards in time_windows
+        ]
+        if len(set(time_window_lengths)) != 1:
+            raise ValueError(
+                "All time windows must have the same length when initializing a GraphTimeSeriesDataset. "
+                "Otherwise, PyTorch's stacking will fail when building batches."
+            )
+        self.time_windows = time_windows
 
-    def __getitem__(self, idx):
+    def __len__(self) -> int:
+        """Returns the total number of samples in the dataset."""
+        return len(self.time_windows)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Fetches one training sample, processes it, and returns it as tensors.
+        Retrieves a single sample from the dataset at the given index.
+
+        A sample consists of the data for all nodes at a specific time window.
         """
-        # Get the root node and start time for this sample
-        root_node, start_time = self.samples[idx]
+        # Get the specific time window for this sample
+        time_window = [self.time_windows[idx]]
 
-        # Perform neighborhood sampling
-        neighbors = list(
-            self.base_graph.predecessors(root_node)
-        )  # Or successors, or both
-        if len(neighbors) > self.num_neighbors:
-            # If too many neighbors, sample a fixed number
-            neighbors = np.random.choice(
-                neighbors, self.num_neighbors, replace=False
-            ).tolist()
-
-        subgraph_nodes = [root_node] + neighbors
-
-        # Use the loader to get data for the subgraph
-        # The time window is defined by the start_time and the desired history length
-        time_window = [(start_time, self.history_length)]
-
-        static_df, temporal_df = self.loader.load_data(
-            node_ids=subgraph_nodes, time_windows=time_window
+        # Use the loader to fetch the data for all nodes at this time window
+        (static_df, temporal_df), jam_target = self.loader.load_data(
+            self.node_ids, time_window
         )
 
-        # TODO: The output must be converted into the tensor format that the GNN needs
-        # This part is highly specific to the GNN library (PyG, DGL, etc.)
-        return static_df, temporal_df
+        # Convert the pandas DataFrames to PyTorch tensors
+        # TODO: The exact conversion logic will depend on the GNN model's input requirements
+        static_tensor = torch.tensor(static_df.values, dtype=torch.float32)
+        temporal_tensor = torch.tensor(temporal_df.values, dtype=torch.float32)
+        target_tensor = torch.tensor(jam_target.values, dtype=torch.float32)
+
+        return static_tensor, temporal_tensor, target_tensor
 
 
 class GraphTimeSeriesLoader:
@@ -79,60 +94,65 @@ class GraphTimeSeriesLoader:
         irregularities_files (list): A list of tuples (start_date, end_date, filepath) for irregularity data.
         coi_points_files (list): A list of tuples for COI points data.
         coi_tracts_files (list): A list of tuples for COI tracts data.
+        default_speeds_df (pd.DataFrame): DataFrame with default speed and trend values for nodes.
     """
 
     def __init__(
         self,
         graph_pkl_filename: str,
-        buildings_csv_filename: str,
-        bus_stops_parquet_filename: str,
         events_csv_filename: str,
         incidents_csv_filename: str,
         road_state_parquet_filename: str,
         irregularities_filenames: list[str],
         coi_points_filenames: list[str],
         coi_tracts_filenames: list[str],
+        default_speeds_parquet_filename: str,
     ):
         """
         Initializes the GraphTimeSeriesLoader with all data sources.
 
         Args:
             base_graph (nx.DiGraph): The base graph with node attributes.
-            events_df (pd.DataFrame): DataFrame containing event data. Must have 'road_id' and 'timeframe' columns.
-            incidents_df (pd.DataFrame): DataFrame with incident data. Must have 'road_id' and 'timeframe' columns.
+
+            events_df (pd.DataFrame): DataFrame containing event data. Must have 'road_id'
+            and 'timeframe' columns.
+
+            incidents_df (pd.DataFrame): DataFrame with incident data. Must have 'road_id'
+            and 'timeframe' columns.
+
             road_state_df (pd.DataFrame): DataFrame with road state data. Must have 'road_id',
-                                          'timeframe_start', and 'timeframe_end' columns.
+            'timeframe_start', and 'timeframe_end' columns.
+
             irregularities_filenames (list): List of file paths for irregularity parquet files.
+
             coi_points_filenames (list): List of file paths for COI points parquet files.
+
             coi_tracts_filenames (list): List of file paths for COI tracts parquet files.
+
+            default_speeds_parquet_filename (str): Path to the Parquet file with default speeds
+            and trends. Must have columns 'mean_trend' and 'mean_regularSpeed'. The index must
+            correspond to the node IDs in the base graph.
         """
         with open(graph_pkl_filename, "rb") as f:
             base_graph = pkl.load(f)
-        all_nodes = list(base_graph.nodes(data=False))
-        all_nodes_df = pd.DataFrame(all_nodes, columns=["road_id"])
 
-        # Many nodes are missing in the buildings dataframe, so we join on road_id
-        # and fill missing values with 0
-        buildings_df = pd.read_csv(buildings_csv_filename)
-        buildings_df = buildings_df.merge(
-            all_nodes_df, on="road_id", how="right"
-        ).fillna(0)
-        # We do the same with the bus stops dataframe
-        bus_stops_df = pd.read_parquet(bus_stops_parquet_filename)
-        bus_stops_df = bus_stops_df.merge(
-            all_nodes_df, on="road_id", how="right"
-        ).fillna(0)
-
-        self.base_graph = base_graph
-        # Update the base graph nodes with the buildings data
-        self._add_node_attributes(buildings_df, node_id_col="road_id")
-        # Update the base graph nodes with the bus stops data
-        self._add_node_attributes(bus_stops_df, node_id_col="road_id")
+        # Clean the base graph node attributes
+        self.base_graph = self._clean_node_attributes(base_graph)
+        self.static_node_data = pd.DataFrame.from_dict(
+            dict(self.base_graph.nodes(data=True)), orient="index"
+        )
+        self.static_node_data.columns = [
+            self._to_snake_case(col) for col in self.static_node_data.columns
+        ]
+        self.static_node_data.index.name = "road_id"
 
         # Load temporal data from CSV and Parquet files
         self.events_df = pd.read_csv(events_csv_filename)
         self.incidents_df = pd.read_csv(incidents_csv_filename)
         self.road_state_df = pd.read_parquet(road_state_parquet_filename)
+
+        # Load the default speeds and trends, assuming index is the node ID
+        self.default_speeds_df = pd.read_parquet(default_speeds_parquet_filename)
 
         # Ensure time columns are in datetime format for efficient filtering
         self.events_df["timeframe"] = pd.to_datetime(self.events_df["timeframe"])
@@ -186,25 +206,137 @@ class GraphTimeSeriesLoader:
             sample_coi_tracts_df = pd.read_parquet(self.coi_tracts_files[0][2])
             self.column_names["coi_tracts"] = sample_coi_tracts_df.columns.tolist()
 
-    def _add_node_attributes(self, df: pd.DataFrame, node_id_col: str) -> None:
+    def _clean_node_attributes(self, base_graph: nx.DiGraph) -> nx.DiGraph:
         """
-        Adds static node attributes to a DataFrame based on the base graph.
+        Cleans the node attributes DataFrame by dropping unnecessary columns and
+        ensuring the remaining columns are in the correct format.
 
         Args:
-            df (pd.DataFrame): The DataFrame to which attributes will be added.
-            node_id_col (str): The name of the column containing node IDs in the DataFrame.
+            base_graph (nx.DiGraph): The base graph with raw node attributes.
 
         Returns:
-            pd.DataFrame: The DataFrame with static attributes added.
+            nx.DiGraph: A new graph with cleaned node attributes.
         """
-        if node_id_col not in df.columns:
-            raise ValueError(f"Column '{node_id_col}' not found in DataFrame.")
+        all_nodes_df = pd.DataFrame.from_dict(
+            dict(base_graph.nodes(data=True)), orient="index"
+        )
 
-        # Add static attributes to the base graph
-        for _, row in df.iterrows():
-            node_id = row[node_id_col]
-            if node_id in self.base_graph.nodes:
-                self.base_graph.nodes[node_id].update(row.to_dict())
+        # Information about the columns with MIV can be found at:
+        # https://www.ideca.gov.co/sites/default/files/2019-05/CatalogoObjetosMRV6.0.pdf
+
+        node_attr_to_drop = [
+            "id_mvi",  # It's already the node ID
+            "MVICODIGO",
+            "MVICCALZAD",
+            "MVICIV",
+            "MVICCAT",
+            "MVINOMBRE",
+            "MVINALTERN",
+            "MVINPRINCI",
+            "MVINGENERA",
+            "MVINANTIGU",
+            "MVIETIQUET",
+            "MVISVIA",
+            "OBJECTID",
+            "contador",
+            "cardinal",
+            "sx",
+            "sy",
+            "ex",
+            "ey",
+            "buildings_yes",
+            "buildings_yesmm",
+        ] + [
+            "bus_stop_mean_distance_meters",
+            "bus_stop_median_distance_meters",
+        ]
+
+        node_attr_to_category = [
+            "MVITCLA",  # It's an int but should be treated as a category
+            "MVITIPO",  # It's a string, should replace "Null" and " " with the same value
+            "MVIVELREG",  # Max speed, it's either [30, 50, "Null"], better to treat as category
+        ]
+
+        node_attr_num = [
+            "MVINUMC",  # Number of lanes, int
+            "length_m",
+        ] + [
+            col
+            for col in all_nodes_df.columns
+            if col.startswith("land_use_")
+            or (
+                col.startswith("bus_stop_")
+                and col
+                not in {
+                    "bus_stop_mean_distance_meters",
+                    "bus_stop_median_distance_meters",
+                }
+            )
+            or col.startswith("population_")
+            or (
+                col.startswith("buildings_")
+                and col not in {"buildings_yes", "buildings_yesmm"}
+            )
+        ]
+
+        # assert set(all_nodes_df.drop(columns=node_attr_to_drop).columns) == set(
+        #     node_attr_to_category + node_attr_num
+        # )
+
+        node_attr_to_drop = [
+            col for col in node_attr_to_drop if col in all_nodes_df.columns
+        ]
+        node_attr_to_category = [
+            col for col in node_attr_to_category if col in all_nodes_df.columns
+        ]
+        node_attr_num = [col for col in node_attr_num if col in all_nodes_df.columns]
+
+        clean_node_attr_df = (
+            all_nodes_df
+            # Drop the columns that are not needed
+            .drop(node_attr_to_drop, axis=1)
+            # Convert both to the same type of Null
+            .replace({"MVITIPO": {" ": "Null"}})
+            # Replace the "Null" string with None
+            .replace({"Null": None})
+            # Convert the columns to the correct types
+            .astype(
+                {col: "category" for col in node_attr_to_category}
+                | {col: "float32" for col in node_attr_num}
+            )
+            # Fill the NaN values with 0 for the numerical columns
+            .fillna({col: 0 for col in node_attr_num})
+            # One-hot encode the categorical columns
+            .pipe(
+                lambda df: pd.get_dummies(
+                    df,
+                    columns=node_attr_to_category,
+                    prefix=node_attr_to_category,
+                    prefix_sep="_",
+                    drop_first=False,
+                    dummy_na=True,
+                )
+            )
+        )
+        # Convert bool columns to int
+        clean_node_attr_df = clean_node_attr_df.astype(
+            {
+                col: "int8"
+                for col in clean_node_attr_df.select_dtypes(include=["bool"]).columns
+            }
+        )
+
+        new_graph = nx.DiGraph()
+        new_graph.add_nodes_from(base_graph.nodes)
+        new_graph.add_edges_from(base_graph.edges(data=True))
+
+        # Convert the DataFrame to the required dictionary format
+        new_node_attributes = clean_node_attr_df.to_dict("index")
+
+        # Set the new attributes on the new graph
+        nx.set_node_attributes(new_graph, new_node_attributes)
+
+        return new_graph
 
     def _preprocess_filenames(
         self, filenames: list[str], pattern: str, date_format: str = "%Y-%m-%d"
@@ -346,53 +478,82 @@ class GraphTimeSeriesLoader:
 
         return result_df
 
+    def _to_snake_case(self, string: str) -> str:
+        """
+        Converts a string to snake_case by:
+        - Always adding underscore after "mvi" or "MVI"
+        - Replacing non-alphanumeric with underscore
+        - Splitting camelCase
+        - Converting to lowercase
+        - Removing leading/trailing underscores
+        - Collapsing multiple underscores
+
+        Args:
+            colnames (list): A list of column names in any case format.
+
+        Returns:
+            list: A list of column names converted to snake_case.
+        """
+        string = string.replace("mvi", "mvi_").replace(
+            "MVI", "MVI_"
+        )  # Add underscore after "mvi" or "MVI"
+        string = re.sub(
+            r"[^a-zA-Z0-9]+", "_", string
+        )  # Replace non-alphanumeric with underscore
+        string = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", string)  # Split camelCase
+        string = string.lower()  # Convert to lowercase
+        string = re.sub(r"_+", "_", string)  # Collapse multiple underscores
+        return string.strip("_")
+
     def load_data(
-        self, node_ids: list[str], time_windows: list[tuple[str, int]]
-    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        self, node_ids: list[str], time_windows: list[tuple[str, int, int]]
+    ) -> tuple[tuple[pd.DataFrame, pd.DataFrame], pd.Series]:
         """
         Loads static and temporal data, creating a dense DataFrame for temporal features.
 
         Args:
             node_ids (list): A list of node IDs to fetch data for.
             time_windows (list): A list of tuples, where each tuple is
-                                 (timeframe_start, num_15_min_periods).
+                                 (timeframe, num_15_min_periods_forwards, num_15_min_periods_backwards).
 
         Returns:
-            tuple: A tuple containing two DataFrames:
-                   - static_df (pd.DataFrame): Static attributes for the requested nodes.
-                   - temporal_df (pd.DataFrame): A dense DataFrame with all temporal features,
-                                                 indexed by (road_id, timeframe), with missing
-                                                 values filled with 0.
+            tuple: A tuple containing:
+                - A tuple of DataFrames: (static_df, temporal_df)
+                    - static_df (pd.DataFrame): Static attributes for the requested nodes.
+                    - temporal_df (pd.DataFrame): A dense DataFrame with all temporal features,
+                                                  indexed by (road_id, timeframe), with missing
+                                                  values filled with 0. (except for trend, speed,
+                                                  and regularSpeed which are filled with mean values
+                                                  of neighboring nodes)
+                - A target DataFrame: jam_target
+                    - jam_target (pd.Series): The target variable 'jam_level',
+                                              indexed by (road_id, timeframe).
         """
         if not node_ids:
             print("No node IDs provided. Returning empty DataFrames.")
-            return pd.DataFrame(), pd.DataFrame()
+            return (pd.DataFrame(), pd.DataFrame()), pd.Series()
 
         print(f"\n--- Starting data load for {len(node_ids)} nodes ---")
+
         # Get static data from the base graph
-        static_data = []
-        for node_id in node_ids:
-            if self.base_graph.has_node(node_id):
-                attrs = self.base_graph.nodes[node_id].copy()
-                attrs["node_id"] = node_id
-                static_data.append(attrs)
-        static_df = pd.DataFrame(static_data).set_index("node_id")
+        static_df = self.static_node_data.loc[node_ids]
 
         if not time_windows:
             print(
                 f"--- Load complete. Found {len(static_df)} static records. No temporal data requested. ---"
             )
-            return static_df, pd.DataFrame()
+            return (static_df, pd.DataFrame()), pd.Series()
 
         # Generate all expected timeframes and the master index
         all_expected_timeframes = []
-        for start_str, num_15_min_periods in time_windows:
-            start_date = pd.to_datetime(start_str)
+        for timeframe_str, num_forwards, num_backwards in time_windows:
+            center_time = pd.to_datetime(timeframe_str)
+            # Round center_time to the nearest 15 minutes
+            center_time = center_time.round("15min")
+            start_date = center_time - timedelta(minutes=num_backwards * 15)
+            total_periods = num_backwards + num_forwards + 1
             all_expected_timeframes.extend(
-                [
-                    start_date + timedelta(minutes=i * 15)
-                    for i in range(num_15_min_periods)
-                ]
+                [start_date + timedelta(minutes=i * 15) for i in range(total_periods)]
             )
         all_expected_timeframes = sorted(list(set(all_expected_timeframes)))
 
@@ -412,12 +573,10 @@ class GraphTimeSeriesLoader:
             "coi_tracts": [],
         }
 
-        for start_str, num_15_min_periods in time_windows:
-            start_date = pd.to_datetime(start_str)
-            # The last timestamp in the window is (n-1)*15 minutes after the start
-            # This makes the window inclusive of `num_15_min_periods` points
-            duration_minutes = (num_15_min_periods - 1) * 15
-            end_date = start_date + timedelta(minutes=duration_minutes)
+        for timeframe_str, num_forwards, num_backwards in time_windows:
+            center_time = pd.to_datetime(timeframe_str)
+            start_date = center_time - timedelta(minutes=num_backwards * 15)
+            end_date = center_time + timedelta(minutes=num_forwards * 15)
 
             # Filter in-memory DataFrames
             raw_data_fragments["events"].append(
@@ -498,16 +657,77 @@ class GraphTimeSeriesLoader:
                 expanded_state_df.set_index(["road_id", "timeframe"]), how="left"
             )
 
-        # Fill missing values and complete with all the expected columns
-        final_temporal_df = master_temporal_df.fillna(0)
+        # Now we must fill missing values and complete with all the expected columns
+        # First we deal with the non-zeroable columns (trend, speed and regularSpeed)
+        master_temporal_df = master_temporal_df.merge(
+            self.default_speeds_df, left_on="road_id", right_index=True, how="left"
+        )
+        fill_map = {
+            "trend": "mean_trend",
+            "speed": "mean_regularSpeed",
+            "regularSpeed": "mean_regularSpeed",
+        }
+        for col, mean_col in fill_map.items():
+            # If the column exists but it has missing values, we fill them with the mean column
+            if col in master_temporal_df.columns:
+                master_temporal_df[col] = master_temporal_df[col].fillna(
+                    master_temporal_df[mean_col]
+                )
+            # If the column does not exist, we create it with the mean column values
+            else:
+                master_temporal_df[col] = master_temporal_df[mean_col].copy()
+        # Drop the helper mean columns
+        master_temporal_df.drop(
+            columns=["mean_trend", "mean_regularSpeed"], inplace=True, errors="ignore"
+        )
+
+        # Fill the rest of the missing values with 0
+        master_temporal_df = master_temporal_df.fillna(0)
+
+        # Ensure all expected columns are present
+        # We fill all columns that are expected but not present in the final DataFrame
+        # with 0, so that the final DataFrame has all the expected columns
         for column_names in self.column_names.values():
             for col in column_names:
-                if col not in final_temporal_df.columns:
-                    final_temporal_df[col] = 0
-        # The columns 'road_id' and 'timeframe' are not needed in the final DataFrame since they are the index
-        final_temporal_df.drop(columns=["road_id", "timeframe"], inplace=True)
+                if col not in master_temporal_df.columns:
+                    master_temporal_df[col] = 0
 
         print(
-            f"--- Load complete. Found {len(static_df)} static records. Temporal DF shape: {final_temporal_df.shape} ---"
+            f"--- Load complete. Found {len(static_df)} static records. Temporal DF shape: {master_temporal_df.shape} ---"
         )
-        return static_df, final_temporal_df.reset_index()
+
+        # Separate temporal features from target variable (jamLevel)
+        if "jamLevel" in master_temporal_df.columns:
+            jam_target = master_temporal_df["jamLevel"]
+            master_temporal_df = master_temporal_df.drop(columns=["jamLevel"])
+        else:
+            jam_target = pd.Series(
+                dtype=np.float64, name="jamLevel", index=master_temporal_df.index
+            )
+
+        # Convert column names to snake_case
+        master_temporal_df.columns = [
+            self._to_snake_case(col) for col in master_temporal_df.columns
+        ]
+        jam_target.name = self._to_snake_case("jamLevel")
+
+        # We drop the 'road_id' and 'timeframe' columns from the temporal DataFrame
+        # since they are already in the index
+        master_temporal_df = master_temporal_df.drop(
+            columns=["road_id", "timeframe"], errors="ignore"
+        )
+        # # We reset the indices to have 'road_id' and 'timeframe' as columns
+        # static_df = static_df.reset_index()
+        # master_temporal_df = master_temporal_df.reset_index()
+        # jam_target = jam_target.reset_index()
+
+        # if len(jam_target) != len(master_temporal_df):
+        #     warnings.warn("jam_target length does not match master_temporal_df length.")
+        # if set(static_df["road_id"]) != set(master_temporal_df["road_id"]):
+        #     warnings.warn(
+        #         "Static DataFrame road_id set does not match temporal DataFrame road_id set."
+        #     )
+        # if not jam_target.index.equals(master_temporal_df.index):
+        #     warnings.warn("jam_target index does not match master_temporal_df index.")
+
+        return (static_df, master_temporal_df), jam_target
