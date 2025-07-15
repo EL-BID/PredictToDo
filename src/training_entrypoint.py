@@ -4,6 +4,9 @@ import logging
 import argparse
 from pathlib import Path
 
+# import ModelTrainer
+
+
 LOG_LEVEL = int(os.getenv('SM_LOG_LEVEL', logging.INFO))
 CHANNEL_TRAIN = os.getenv('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train')
 CHANNEL_VALIDATION = os.getenv('SM_CHANNEL_VALIDATION', '/opt/ml/input/data/validation')
@@ -70,7 +73,7 @@ def check_data_channels() -> tuple[Path, Path]:
     return train_path, validation_path
 
 
-def train_model(train_path: Path = None, validation_path: Path = None) -> None:
+def train_model(args: dict, train_path: Path = None, validation_path: Path = None) -> None:
     logger.info("Starting model training...")
 
     # This is where you would implement the actual training logic using the parsed arguments.
@@ -83,17 +86,19 @@ def train_model(train_path: Path = None, validation_path: Path = None) -> None:
         accuracy = 0.9 - (0.1 * epoch)  # Example accuracy value
         logger.info(f"epoch={epoch}, train-loss={loss:.4f}, train-accuracy={accuracy:.4f}")
         time.sleep(2)  # Simulate time taken for each epoch
+    # model = ModelTrainer.train(**args)
 
     logger.info("Model training completed successfully.")
+    # return model
 
 
 if __name__ == "__main__":
     args = parse_args()
 
     train_path, validation_path = check_data_channels()
-    model = train_model(train_path, validation_path)
+    model = train_model(args, train_path, validation_path)
 
     model_path = Path(MODEL_DIR) / 'model.pth'
     # Here you would save your trained model, e.g., using torch.save(model.state_dict(), model_path)
-    model_path.write_text("Trained model placeholder")  # Placeholder for actual model saving
+    # model_path.write_text("Trained model placeholder")  # Placeholder for actual model saving
     logger.info(f"Model saved to {model_path}")
