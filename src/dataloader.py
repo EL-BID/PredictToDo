@@ -8,6 +8,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import torch
+import pickle
 from torch.utils.data import Dataset
 
 simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
@@ -20,6 +21,14 @@ class GraphTimeSeriesDataset(Dataset):
     This dataset holds the node IDs and time windows, and for each sample,
     it retrieves the corresponding graph data using the provided loader.
     """
+
+    FUTURE_KNOWN_COLUMNS = [
+            'coi_puntos',
+            'coi_tramo',
+            'aglomeracion',
+            'emergencia',
+            'manifestacion'
+    ]
 
     def __init__(
         self,
@@ -53,28 +62,59 @@ class GraphTimeSeriesDataset(Dataset):
     def __len__(self) -> int:
         """Returns the total number of samples in the dataset."""
         return len(self.time_windows)
+    # Version One Martin
+    # def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    #     """
+    #     Retrieves a single sample from the dataset at the given index.
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Retrieves a single sample from the dataset at the given index.
+    #     A sample consists of the data for all nodes at a specific time window.
+    #     """
+    #     # Get the specific time window for this sample
+    #     time_window = [self.time_windows[idx]]
 
-        A sample consists of the data for all nodes at a specific time window.
-        """
-        # Get the specific time window for this sample
-        time_window = [self.time_windows[idx]]
+    #     # Use the loader to fetch the data for all nodes at this time window
+    #     (static_df, temporal_df), jam_target = self.loader.load_data(
+    #         self.node_ids, time_window
+    #     )
 
-        # Use the loader to fetch the data for all nodes at this time window
-        (static_df, temporal_df), jam_target = self.loader.load_data(
-            self.node_ids, time_window
-        )
+    #     # Convert the pandas DataFrames to PyTorch tensors
+    #     # TODO: The exact conversion logic will depend on the GNN model's input requirements
+    #     static_tensor = torch.tensor(static_df.values, dtype=torch.float32)
+    #     temporal_tensor = torch.tensor(temporal_df.values, dtype=torch.float32)
+    #     target_tensor = torch.tensor(jam_target.values, dtype=torch.float32)
 
-        # Convert the pandas DataFrames to PyTorch tensors
-        # TODO: The exact conversion logic will depend on the GNN model's input requirements
-        static_tensor = torch.tensor(static_df.values, dtype=torch.float32)
-        temporal_tensor = torch.tensor(temporal_df.values, dtype=torch.float32)
-        target_tensor = torch.tensor(jam_target.values, dtype=torch.float32)
+    #     return static_tensor, temporal_tensor, target_tensor
 
-        return static_tensor, temporal_tensor, target_tensor
+    # Version 2 Jose
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        time_window = [self.time_windows[idx]]  # Single time window
+        (static_df, temporal_df), jam_target = self.loader.load_data(self.node_ids, time_window)
+
+        # Clean and select numeric data
+        temporal_df = temporal_df.drop(columns=["road_id", "timeframe"], errors="ignore")
+        temporal_df = temporal_df.select_dtypes(include=[np.number]).astype(np.float32)
+
+        # Tensor shapes
+        N = static_df.shape[0]             # number of nodes
+        T = len(temporal_df) // N          # total time steps
+        D = temporal_df.shape[1]           # number of dynamic features
+
+        static_tensor = torch.tensor(static_df.values, dtype=torch.float32)  # [N, S]
+        full_seq = torch.tensor(temporal_df.values, dtype=torch.float32).view(T, N, D)  # [T, N, D]
+
+        _, H, T_in = self.time_windows[idx]
+        past_inputs = full_seq[:T_in].permute(0, 1, 2)    # [T_in, N, D]
+        future_full = full_seq[-H:].permute(0, 1, 2)      # [H, N, D]
+
+        # Select only future-known variables
+        future_col_indices = [temporal_df.columns.get_loc(col) for col in self.FUTURE_KNOWN_COLUMNS]
+        future_inputs = future_full[:, :, future_col_indices]  # [H, N, D_f]
+
+        # Target (jam_level)
+        jam_target = torch.tensor(jam_target.values, dtype=torch.float32).view(T, N)  # [T, N]
+        target = jam_target[-H:].permute(1, 0)  # [N, H] to match model output
+
+        return static_tensor, past_inputs, future_inputs, target
 
 
 class GraphTimeSeriesLoader:
@@ -107,6 +147,7 @@ class GraphTimeSeriesLoader:
         coi_points_filenames: list[str],
         coi_tracts_filenames: list[str],
         default_speeds_parquet_filename: str,
+        dynamic_columns: str
     ):
         """
         Initializes the GraphTimeSeriesLoader with all data sources.
@@ -205,6 +246,9 @@ class GraphTimeSeriesLoader:
         if self.coi_tracts_files:
             sample_coi_tracts_df = pd.read_parquet(self.coi_tracts_files[0][2])
             self.column_names["coi_tracts"] = sample_coi_tracts_df.columns.tolist()
+
+        with open(dynamic_columns, "rb") as f:
+            self.required_dynamic_columns = pkl.load(f)
 
     def _clean_node_attributes(self, base_graph: nx.DiGraph) -> nx.DiGraph:
         """
@@ -714,8 +758,17 @@ class GraphTimeSeriesLoader:
         # We drop the 'road_id' and 'timeframe' columns from the temporal DataFrame
         # since they are already in the index
         master_temporal_df = master_temporal_df.drop(
-            columns=["road_id", "timeframe"], errors="ignore"
+            columns=["road_id", "timeframe",'id_mvi'], errors="ignore"
         )
+        master_temporal_df = master_temporal_df.reset_index()
+
+
+        for col in self.required_dynamic_columns:
+            col_snake = self._to_snake_case(col)
+            if col_snake not in master_temporal_df.columns:
+                master_temporal_df[col_snake] = 0
+
+        master_temporal_df[['road_id','timeframe',*self.required_dynamic_columns]]
         # # We reset the indices to have 'road_id' and 'timeframe' as columns
         # static_df = static_df.reset_index()
         # master_temporal_df = master_temporal_df.reset_index()
