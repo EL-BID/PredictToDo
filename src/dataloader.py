@@ -271,7 +271,21 @@ class GraphTimeSeriesLoader:
                     pd.read_parquet(f).columns for _, _, f in files if os.path.exists(f)
                 ]
                 cols = [set(cols) for cols in cols]
-                self.column_names[name] = list(set.union(*cols))
+                # The sorting is necessary to keep consistency in the order of columns
+                self.column_names[name] = sorted(list(set.union(*cols)))
+
+        all_column_names = set(
+            [col for cols in self.column_names.values() for col in cols]
+        ) - {
+            "road_id",
+            "timeframe",
+            "timeframe_start",
+            "timeframe_end",
+            "id_mvi",
+            target_col_name,
+        }
+        all_column_names = [self._to_snake_case(col) for col in all_column_names]
+        self.sorted_column_names = sorted(list(all_column_names))
 
         self.target_col_name = target_col_name
 
@@ -783,6 +797,10 @@ class GraphTimeSeriesLoader:
         master_temporal_df = master_temporal_df.drop(
             columns=["road_id", "timeframe", "id_mvi"], errors="ignore"
         )
+
+        # Necessary to keep consistency in the order of columns
+        # Which is fundamental for the PyTorch model input
+        master_temporal_df = master_temporal_df[self.sorted_column_names]
 
         # # We reset the indices to have 'road_id' and 'timeframe' as columns
         # static_df = static_df.reset_index()
