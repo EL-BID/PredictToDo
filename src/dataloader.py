@@ -245,7 +245,7 @@ class GraphTimeSeriesLoader:
         self.column_names = {
             "events": self.events_df.columns.tolist(),
             "incidents": self.incidents_df.columns.tolist(),
-            # For road_state we generat the list that could be returned by `_expand_road_state_data`
+            # For road_state we generate the list that could be returned by `_expand_road_state_data`
             "road_state": ["road_id", "timeframe"]
             + [
                 col
