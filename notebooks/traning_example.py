@@ -17,16 +17,19 @@
 # cd ..
 
 # %%
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-import networkx as nx
 from torch_geometric.utils import from_networkx
-from torch_geometric.data import Data, Dataset, DataLoader
+from torch.utils.data import Dataset
+from torch_geometric.loader import NeighborLoader, DataLoader
 from torch_geometric_temporal.nn.recurrent import GConvGRU, TGCN, GConvLSTM, A3TGCN2
-import os
+
 from src.dataloader import GraphTimeSeriesDataset, GraphTimeSeriesLoader
+
+processed_data_dir = "data/datos_procesados"
 
 
 # %%
@@ -41,9 +44,17 @@ class StaticEncoder(nn.Module):
 
 
 # === General model framework ===
-class GNN_Temporal_Model(nn.Module):
-    def __init__(self, edge_index, static_dim, dynamic_dim, future_dim,
-                 input_seq_len, forecast_horizon, model_type="GConvGRU"):
+class GNNTemporalModel(nn.Module):
+    def __init__(
+        self,
+        edge_index,
+        static_dim,
+        dynamic_dim,
+        future_dim,
+        input_seq_len,
+        forecast_horizon,
+        model_type="GConvGRU",
+    ):
         super().__init__()
         self.edge_index = edge_index
         self.static_encoder = StaticEncoder(static_dim)
@@ -58,14 +69,20 @@ class GNN_Temporal_Model(nn.Module):
             self.recurrent = GConvLSTM(32 + dynamic_dim, 32, K=2)
             self.future_recurrent = GConvLSTM(32 + future_dim, 32, K=2)
         elif model_type == "A3TGCN":
-            self.recurrent = A3TGCN2(in_channels=32 + dynamic_dim,
-                                     out_channels=32,
-                                     periods=input_seq_len,
-                                     kernel=2)
-            self.future_recurrent = A3TGCN2(in_channels=32 + future_dim,
-                                            out_channels=32,
-                                            periods=forecast_horizon,
-                                            kernel=2)
+            self.recurrent = A3TGCN2(
+                in_channels=32 + dynamic_dim,
+                out_channels=32,
+                periods=input_seq_len,
+                batch_size=None,  # batch size is not used in A3TGCN2 but is required for initialization
+                # kernel=2, # kernel size is not used in A3TGCN2
+            )
+            self.future_recurrent = A3TGCN2(
+                in_channels=32 + future_dim,
+                out_channels=32,
+                periods=forecast_horizon,
+                # kernel=2, # kernel size is not used in A3TGCN2
+                batch_size=None,  # batch size is not used in A3TGCN2 but is required for initialization
+            )
         else:
             raise ValueError("Unknown model type")
 
@@ -114,39 +131,55 @@ class GNN_Temporal_Model(nn.Module):
 
 
 # %%
-import os
-processed_data_dir = "data/datos_procesados"
-loader = GraphTimeSeriesLoader(
+ts_loader = GraphTimeSeriesLoader(
     graph_pkl_filename=f"{processed_data_dir}/conectivity_graph/road_graph.pickle",
     events_csv_filename=f"{processed_data_dir}/events/events_dataset.csv",
     incidents_csv_filename=f"{processed_data_dir}/incidents/incidents_dataset.csv",
     road_state_parquet_filename=f"{processed_data_dir}/road_state/road_state_dateset.parquet",
-    irregularities_filenames=[f"{processed_data_dir}/irregularidades_procesadas/" + f for f in os.listdir(f"{processed_data_dir}/irregularidades_procesadas/") if f.endswith('.parquet')],
-    coi_points_filenames=[f"{processed_data_dir}/pmts_processed/coi_puntos/" + f for f in os.listdir(f"{processed_data_dir}/pmts_processed/coi_puntos/") if f.endswith('.parquet')],
-    coi_tracts_filenames=[f"{processed_data_dir}/pmts_processed/coi_tramos/" + f for f in os.listdir(f"{processed_data_dir}/pmts_processed/coi_tramos/") if f.endswith('.parquet')],
+    irregularities_filenames=[
+        f"{processed_data_dir}/irregularidades_procesadas/" + f
+        for f in os.listdir(f"{processed_data_dir}/irregularidades_procesadas/")
+        if f.endswith(".parquet")
+    ],
+    coi_points_filenames=[
+        f"{processed_data_dir}/pmts_processed/coi_puntos/" + f
+        for f in os.listdir(f"{processed_data_dir}/pmts_processed/coi_puntos/")
+        if f.endswith(".parquet")
+    ],
+    coi_tracts_filenames=[
+        f"{processed_data_dir}/pmts_processed/coi_tramos/" + f
+        for f in os.listdir(f"{processed_data_dir}/pmts_processed/coi_tramos/")
+        if f.endswith(".parquet")
+    ],
     default_speeds_parquet_filename=f"{processed_data_dir}/neighbor_features.parquet",
-    dynamic_columns=f"{processed_data_dir}/columns_dict.pkl"
+    jams_parquet_filenames=[
+        f"{processed_data_dir}/jams_procesados/" + f
+        for f in os.listdir(f"{processed_data_dir}/jams_procesados/")
+        if f.endswith(".parquet")
+    ],
 )
 
 # %%
-all_nodes = list(loader.base_graph.nodes())
+all_nodes = list(ts_loader.base_graph.nodes())
 # crea un mapping de tus node_ids a índices
-edge_index_full = from_networkx(loader.base_graph).edge_index
+edge_index_full = from_networkx(
+    ts_loader.base_graph, group_node_attrs="all", group_edge_attrs="all"
+).edge_index
 
 # %%
 nodes_to_load = all_nodes[:500]
 nodes_to_load = [str(n) for n in nodes_to_load]
 time_windows_to_load = [
-    ('2024-09-29 23:00:00', 96, 288),
-    ('2024-08-24 15:30:00', 96, 288),
-    ('2024-02-24 01:30:00', 96, 288)
+    ("2024-09-29 23:00:00", 96, 288),
+    ("2024-08-24 15:30:00", 96, 288),
+    ("2024-02-24 01:30:00", 96, 288),
 ]
 
 # Map original node ids to compact indices
 node_to_idx = {nid: i for i, nid in enumerate(nodes_to_load)}
 
 # Build mapping from NetworkX enumeration (used by from_networkx) to original node IDs
-ordered_nodes = list(loader.base_graph.nodes())
+ordered_nodes = list(ts_loader.base_graph.nodes())
 nx_index_to_node = {i: nid for i, nid in enumerate(ordered_nodes)}
 
 src = []
@@ -169,9 +202,7 @@ print("Num nodes (N):", len(nodes_to_load))
 
 # %%
 sample_data = GraphTimeSeriesDataset(
-    loader=loader,
-    node_ids=nodes_to_load,
-    time_windows=time_windows_to_load
+    loader=ts_loader, node_ids=nodes_to_load, time_windows=time_windows_to_load
 )
 
 # %%
@@ -184,21 +215,23 @@ future_dim = future_inputs.shape[-1]
 input_seq_len = 288
 forecast_horizon = 96
 
+assert isinstance(sample_data, Dataset)
+
 # Reload dataset with batch loader
 train_dataloader = DataLoader(sample_data, batch_size=2, shuffle=False)
 
 # %%
 # for model_type in ["GConvGRU", "TGCN", "GConvLSTM", "A3TGCN"]:
-model_type = "GConvGRU"
+model_type = "A3TGCN"
 print(f"\nTraining model: {model_type}")
-model = GNN_Temporal_Model(
+model = GNNTemporalModel(
     edge_index=edge_index_filtered,
     model_type=model_type,
     static_dim=static_dim,
     dynamic_dim=dynamic_dim,
     future_dim=future_dim,
     input_seq_len=input_seq_len,
-    forecast_horizon=forecast_horizon
+    forecast_horizon=forecast_horizon,
 )
 
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -219,13 +252,4 @@ for epoch in range(5):
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
-    print(f"Epoch {epoch+1}, Loss: {total_loss/len(train_dataloader):.4f}")
-
-# %%
-static_batch.shape
-dynamic_seq_inputs.shape
-future_inputs.shape
-
-# %%
-
-# %%
+    print(f"Epoch {epoch + 1}, Loss: {total_loss / len(train_dataloader):.4f}")
