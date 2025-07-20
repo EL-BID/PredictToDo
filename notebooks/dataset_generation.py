@@ -18,104 +18,12 @@
 
 # %%
 import os
-import pandas as pd
 from torch.utils.data import DataLoader
 
-from tqdm.auto import tqdm
 
 from src.dataloader import GraphTimeSeriesLoader, GraphTimeSeriesDataset
-import re
-from collections import defaultdict
 # %load_ext autoreload
 # %autoreload 2
-
-# %%
-# === Utility for snake_case conversion ===
-import pickle
-
-
-def to_snake_case(string: str) -> str:
-    string = string.replace("mvi", "mvi_").replace("MVI", "MVI_")
-    string = re.sub(r"[^a-zA-Z0-9]+", "_", string)
-    string = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", string)
-    string = string.lower()
-    string = re.sub(r"_+", "_", string)
-    return string.strip("_")
-
-
-# === Base path ===
-processed_data_dir = "data/datos_procesados"
-
-# === Define dynamic datasets only ===
-dynamic_datasets = {
-    "events": [f"{processed_data_dir}/events/events_dataset.csv"],
-    "incidents": [f"{processed_data_dir}/incidents/incidents_dataset.csv"],
-    "road_state": [f"{processed_data_dir}/road_state/road_state_dateset.parquet"],
-    "irregularities": [
-        os.path.join(processed_data_dir, "irregularidades_procesadas", f)
-        for f in os.listdir(f"{processed_data_dir}/irregularidades_procesadas/")
-        if f.endswith(".parquet")
-    ]
-    if os.path.exists(f"{processed_data_dir}/irregularidades_procesadas/")
-    else [],
-    "coi_points": [
-        os.path.join(processed_data_dir, "pmts_processed/coi_puntos", f)
-        for f in os.listdir(f"{processed_data_dir}/pmts_processed/coi_puntos/")
-        if f.endswith(".parquet")
-    ]
-    if os.path.exists(f"{processed_data_dir}/pmts_processed/coi_puntos/")
-    else [],
-    "coi_tracts": [
-        os.path.join(processed_data_dir, "pmts_processed/coi_tramos", f)
-        for f in os.listdir(f"{processed_data_dir}/pmts_processed/coi_tramos/")
-        if f.endswith(".parquet")
-    ]
-    if os.path.exists(f"{processed_data_dir}/pmts_processed/coi_tramos/")
-    else [],
-}
-
-# === Track source columns ===
-column_sources = defaultdict(set)
-
-# === Skip columns you want to exclude globally ===
-EXCLUDE_COLUMNS = {"road_id", "timeframe", "timeframe_start", "timeframe_end"}
-
-# === Scan columns per dataset ===
-for dataset_name in tqdm(dynamic_datasets, desc="Scanning datasets"):
-    for path in tqdm(
-        dynamic_datasets[dataset_name], desc=f"{dataset_name}", leave=False
-    ):
-        if not os.path.exists(path):
-            print(f"[Missing] {path}")
-            continue
-        try:
-            df = (
-                pd.read_parquet(path)
-                if path.endswith(".parquet")
-                else pd.read_csv(path)
-            )
-
-            # Standardize
-            if "id_mvi" in df.columns:
-                df = df.rename(columns={"id_mvi": "road_id"})
-
-            for col in df.columns:
-                if col in EXCLUDE_COLUMNS:
-                    continue
-                clean_col = to_snake_case(col)
-                column_sources[clean_col].add(dataset_name)
-
-        except Exception as e:
-            print(f"[Error] {dataset_name} – {path}: {e}")
-
-# === Final cleaned dictionary object ===
-DYNAMIC_FEATURE_COLUMNS = {
-    col: sorted(list(sources)) for col, sources in column_sources.items()
-}
-
-processed_data_dir = "data/datos_procesados"
-with open(f"{processed_data_dir}/columns_dict.pkl", "wb") as f_pkl:
-    pickle.dump(DYNAMIC_FEATURE_COLUMNS, f_pkl)
 
 # %%
 processed_data_dir = "data/datos_procesados"
@@ -151,40 +59,38 @@ dataset_filenames = {
 
 graph_filename = f"{processed_data_dir}/conectivity_graph/road_graph.pickle"
 imputation_parquet_filename = f"{processed_data_dir}/neighbor_features.parquet"
-dynamic_columns = f"{processed_data_dir}/columns_dict.pkl"
+
+# # Load one file from each dataset to see the column names and their types
+# def load_dataset_columns(dataset_filenames):
+#     columns: dict[str, str] = {}
+#     for key, filename in dataset_filenames.items():
+#         if isinstance(filename, list):
+#             # If it's a list, load the first file
+#             filename = filename[0]
+#         df = (
+#             pd.read_parquet(filename)
+#             if filename.endswith(".parquet")
+#             else pd.read_csv(filename)
+#         )
+#         columns.update(
+#             {f"{key}_{col}": str(dtype) for col, dtype in zip(df.columns, df.dtypes)}
+#         )
+#     return columns
 
 
-# Load one file from each dataset to see the column names and their types
-def load_dataset_columns(dataset_filenames):
-    columns: dict[str, str] = {}
-    for key, filename in dataset_filenames.items():
-        if isinstance(filename, list):
-            # If it's a list, load the first file
-            filename = filename[0]
-        df = (
-            pd.read_parquet(filename)
-            if filename.endswith(".parquet")
-            else pd.read_csv(filename)
-        )
-        columns.update(
-            {f"{key}_{col}": str(dtype) for col, dtype in zip(df.columns, df.dtypes)}
-        )
-    return columns
+# dataset_columns = load_dataset_columns(dataset_filenames)
+# dataset_columns_df = (
+#     pd.DataFrame(dataset_columns, index=["dtype"])
+#     .T.reset_index()
+#     .rename(columns={"index": "column_name"})
+# )
+# object_columns = dataset_columns_df[
+#     ~dataset_columns_df["dtype"].isin(["float64", "int64", "int32"])
+# ].column_name
 
-
-dataset_columns = load_dataset_columns(dataset_filenames)
-dataset_columns_df = (
-    pd.DataFrame(dataset_columns, index=["dtype"])
-    .T.reset_index()
-    .rename(columns={"index": "column_name"})
-)
-object_columns = dataset_columns_df[
-    ~dataset_columns_df["dtype"].isin(["float64", "int64", "int32"])
-].column_name
-
-assert all(
-    "timeframe" in col or "road_id" in col or "id_mvi" in col for col in object_columns
-)
+# assert all(
+#     "timeframe" in col or "road_id" in col or "id_mvi" in col for col in object_columns
+# )
 
 # %%
 loader = GraphTimeSeriesLoader(
@@ -260,9 +166,3 @@ for epoch in range(num_epochs):
         # loss = criterion(output, target_batch)
         # loss.backward()
         # optimizer.step()
-
-# %%
-32 * 135000
-
-# %%
-static_batch.shape
