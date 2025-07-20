@@ -52,4 +52,4 @@ select = ["I"]
 
 [tool.codespell]
 # Add a comma-separated list of file patterns to skip
-skip = "./data/*"
+skip = ["./data/*", "*/htmlcov/*"]
