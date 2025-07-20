@@ -86,16 +86,13 @@ def file_paths(temp_data_dir: str) -> dict[str, str | list[str]]:
             "regularSpeed": [90.0],
             "trend": [1.2],
             "irreg_type": [0.9],
-            "jamLevel": [2],
         }
     )
     irreg_f1 = os.path.join(IRREG_DIR, "irregs_proc_2024-07-01_2024-07-15.parquet")
     irreg_df_1.to_parquet(irreg_f1)
 
     irreg_f2 = os.path.join(IRREG_DIR, "irregs_proc_2024-08-01_2024-08-15.parquet")
-    pd.DataFrame(
-        {"timeframe": [], "id_mvi": [], "irreg_type": [], "jamLevel": []}
-    ).to_parquet(irreg_f2)
+    pd.DataFrame({"timeframe": [], "id_mvi": [], "irreg_type": []}).to_parquet(irreg_f2)
 
     # COI Points
     COI_P_DIR = os.path.join(temp_data_dir, "coi_points")
@@ -134,6 +131,19 @@ def file_paths(temp_data_dir: str) -> dict[str, str | list[str]]:
     ).set_index("road_id")
     default_speeds_df.to_parquet(default_speeds_filename)
 
+    # Jams DataFrame
+    jams_dir = os.path.join(temp_data_dir, "jams")
+    os.makedirs(jams_dir, exist_ok=True)
+    jams_df = pd.DataFrame(
+        {
+            "timeframe": pd.to_datetime(["2024-07-10 08:15:00"]),
+            "road_id": [101],
+            "level_mean": [2],
+        }
+    )
+    jams_f1 = os.path.join(jams_dir, "jams_proc_2024-07-01_2024-07-15.parquet")
+    jams_df.to_parquet(jams_f1)
+
     return {
         "graph_pkl_filename": graph_filename,
         "events_csv_filename": events_filename,
@@ -143,6 +153,7 @@ def file_paths(temp_data_dir: str) -> dict[str, str | list[str]]:
         "coi_points_filenames": [coi_p_f1],
         "coi_tracts_filenames": [coi_t_f1],
         "default_speeds_parquet_filename": default_speeds_filename,
+        "jams_parquet_filenames": [jams_f1],
     }
 
 
@@ -157,6 +168,7 @@ def data_loader(file_paths: dict[str, str | list[str]]) -> GraphTimeSeriesLoader
     assert isinstance(file_paths["coi_points_filenames"], list)
     assert isinstance(file_paths["coi_tracts_filenames"], list)
     assert isinstance(file_paths["default_speeds_parquet_filename"], str)
+    assert isinstance(file_paths["jams_parquet_filenames"], list)
 
     return GraphTimeSeriesLoader(
         graph_pkl_filename=file_paths["graph_pkl_filename"],
@@ -167,6 +179,7 @@ def data_loader(file_paths: dict[str, str | list[str]]) -> GraphTimeSeriesLoader
         coi_points_filenames=file_paths["coi_points_filenames"],
         coi_tracts_filenames=file_paths["coi_tracts_filenames"],
         default_speeds_parquet_filename=file_paths["default_speeds_parquet_filename"],
+        jams_parquet_filenames=file_paths["jams_parquet_filenames"],
     )
 
 
