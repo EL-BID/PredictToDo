@@ -1,4 +1,5 @@
 import os
+import pickle
 import pickle as pkl
 import re
 from datetime import timedelta
@@ -8,7 +9,6 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import torch
-import pickle
 from torch.utils.data import Dataset
 
 simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
@@ -23,11 +23,11 @@ class GraphTimeSeriesDataset(Dataset):
     """
 
     FUTURE_KNOWN_COLUMNS = [
-            'coi_puntos',
-            'coi_tramo',
-            'aglomeracion',
-            'emergencia',
-            'manifestacion'
+        "coi_puntos",
+        "coi_tramo",
+        "aglomeracion",
+        "emergencia",
+        "manifestacion",
     ]
 
     def __init__(
@@ -62,6 +62,7 @@ class GraphTimeSeriesDataset(Dataset):
     def __len__(self) -> int:
         """Returns the total number of samples in the dataset."""
         return len(self.time_windows)
+
     # Version One Martin
     # def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     #     """
@@ -86,32 +87,44 @@ class GraphTimeSeriesDataset(Dataset):
     #     return static_tensor, temporal_tensor, target_tensor
 
     # Version 2 Jose
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(
+        self, idx: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         time_window = [self.time_windows[idx]]  # Single time window
-        (static_df, temporal_df), jam_target = self.loader.load_data(self.node_ids, time_window)
+        (static_df, temporal_df), jam_target = self.loader.load_data(
+            self.node_ids, time_window
+        )
 
         # Clean and select numeric data
-        temporal_df = temporal_df.drop(columns=["road_id", "timeframe"], errors="ignore")
+        temporal_df = temporal_df.drop(
+            columns=["road_id", "timeframe"], errors="ignore"
+        )
         temporal_df = temporal_df.select_dtypes(include=[np.number]).astype(np.float32)
 
         # Tensor shapes
-        N = static_df.shape[0]             # number of nodes
-        T = len(temporal_df) // N          # total time steps
-        D = temporal_df.shape[1]           # number of dynamic features
+        N = static_df.shape[0]  # number of nodes
+        T = len(temporal_df) // N  # total time steps
+        D = temporal_df.shape[1]  # number of dynamic features
 
         static_tensor = torch.tensor(static_df.values, dtype=torch.float32)  # [N, S]
-        full_seq = torch.tensor(temporal_df.values, dtype=torch.float32).view(T, N, D)  # [T, N, D]
+        full_seq = torch.tensor(temporal_df.values, dtype=torch.float32).view(
+            T, N, D
+        )  # [T, N, D]
 
         _, H, T_in = self.time_windows[idx]
-        past_inputs = full_seq[:T_in].permute(0, 1, 2)    # [T_in, N, D]
-        future_full = full_seq[-H:].permute(0, 1, 2)      # [H, N, D]
+        past_inputs = full_seq[:T_in].permute(0, 1, 2)  # [T_in, N, D]
+        future_full = full_seq[-H:].permute(0, 1, 2)  # [H, N, D]
 
         # Select only future-known variables
-        future_col_indices = [temporal_df.columns.get_loc(col) for col in self.FUTURE_KNOWN_COLUMNS]
+        future_col_indices = [
+            temporal_df.columns.get_loc(col) for col in self.FUTURE_KNOWN_COLUMNS
+        ]
         future_inputs = future_full[:, :, future_col_indices]  # [H, N, D_f]
 
         # Target (jam_level)
-        jam_target = torch.tensor(jam_target.values, dtype=torch.float32).view(T, N)  # [T, N]
+        jam_target = torch.tensor(jam_target.values, dtype=torch.float32).view(
+            T, N
+        )  # [T, N]
         target = jam_target[-H:].permute(1, 0)  # [N, H] to match model output
 
         return static_tensor, past_inputs, future_inputs, target
@@ -135,6 +148,7 @@ class GraphTimeSeriesLoader:
         coi_points_files (list): A list of tuples for COI points data.
         coi_tracts_files (list): A list of tuples for COI tracts data.
         default_speeds_df (pd.DataFrame): DataFrame with default speed and trend values for nodes.
+        jams_files (list): A list of tuples (start_date, end_date, filepath) for jam level data.
     """
 
     def __init__(
@@ -147,7 +161,8 @@ class GraphTimeSeriesLoader:
         coi_points_filenames: list[str],
         coi_tracts_filenames: list[str],
         default_speeds_parquet_filename: str,
-        dynamic_columns: str
+        jams_parquet_filenames: list[str],
+        target_col_name: str = "level_mean",
     ):
         """
         Initializes the GraphTimeSeriesLoader with all data sources.
@@ -173,6 +188,8 @@ class GraphTimeSeriesLoader:
             default_speeds_parquet_filename (str): Path to the Parquet file with default speeds
             and trends. Must have columns 'mean_trend' and 'mean_regularSpeed'. The index must
             correspond to the node IDs in the base graph.
+
+            jams_parquet_filenames (list): List of file paths for jam level parquet files.
         """
         with open(graph_pkl_filename, "rb") as f:
             base_graph = pkl.load(f)
@@ -220,6 +237,10 @@ class GraphTimeSeriesLoader:
             r"coi_tramo_dataset_(\d{8})_(\d{8})\.parquet",
             date_format="%Y%m%d",
         )
+        self.jams_files = self._preprocess_filenames(
+            jams_parquet_filenames,
+            r"jams_proc_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})\.parquet",
+        )
 
         self.column_names = {
             "events": self.events_df.columns.tolist(),
@@ -231,24 +252,28 @@ class GraphTimeSeriesLoader:
                 for col in self.road_state_df.columns
                 if "timeframe" not in col and col != "road_id"
             ],
-            # For these three we can load one of the files to get the columns
+            # For these four we must load the files to get the columns
             "irregularities": [],
             "coi_points": [],
             "coi_tracts": [],
+            "jams": [],
         }
-        # Load one file from each of the last three to get their columns
-        if self.irregularities_files:
-            sample_irreg_df = pd.read_parquet(self.irregularities_files[0][2])
-            self.column_names["irregularities"] = sample_irreg_df.columns.tolist()
-        if self.coi_points_files:
-            sample_coi_df = pd.read_parquet(self.coi_points_files[0][2])
-            self.column_names["coi_points"] = sample_coi_df.columns.tolist()
-        if self.coi_tracts_files:
-            sample_coi_tracts_df = pd.read_parquet(self.coi_tracts_files[0][2])
-            self.column_names["coi_tracts"] = sample_coi_tracts_df.columns.tolist()
+        # Load the files from each of the last four to get their columns
+        parquet_sources = [
+            ("irregularities", self.irregularities_files),
+            ("coi_points", self.coi_points_files),
+            ("coi_tracts", self.coi_tracts_files),
+            ("jams", self.jams_files),
+        ]
+        for name, files in parquet_sources:
+            if files:
+                cols = [
+                    pd.read_parquet(f).columns for _, _, f in files if os.path.exists(f)
+                ]
+                cols = [set(cols) for cols in cols]
+                self.column_names[name] = list(set.union(*cols))
 
-        with open(dynamic_columns, "rb") as f:
-            self.required_dynamic_columns = pkl.load(f)
+        self.target_col_name = target_col_name
 
     def _clean_node_attributes(self, base_graph: nx.DiGraph) -> nx.DiGraph:
         """
@@ -615,6 +640,7 @@ class GraphTimeSeriesLoader:
             "irregularities": [],
             "coi_points": [],
             "coi_tracts": [],
+            "jams": [],
         }
 
         for timeframe_str, num_forwards, num_backwards in time_windows:
@@ -643,32 +669,27 @@ class GraphTimeSeriesLoader:
                 ]
             )
 
-            irreg_files = self._find_relevant_files(
-                self.irregularities_files, start_date, end_date
-            )
-            raw_data_fragments["irregularities"].append(
-                self._load_data_from_parquets(
-                    irreg_files, node_ids, start_date, end_date, "id_mvi", "timeframe"
+            # List of sources to process with their file lists and column index names
+            parquet_sources = [
+                ("irregularities", self.irregularities_files, "id_mvi", "timeframe"),
+                ("coi_points", self.coi_points_files, "road_id", "timeframe"),
+                ("coi_tracts", self.coi_tracts_files, "road_id", "timeframe"),
+                ("jams", self.jams_files, "road_id", "timeframe"),
+            ]
+            for name, file_list, node_id_col, time_col in parquet_sources:
+                relevant_files = self._find_relevant_files(
+                    file_list, start_date, end_date
                 )
-            )
-
-            coi_p_files = self._find_relevant_files(
-                self.coi_points_files, start_date, end_date
-            )
-            raw_data_fragments["coi_points"].append(
-                self._load_data_from_parquets(
-                    coi_p_files, node_ids, start_date, end_date, "road_id", "timeframe"
+                raw_data_fragments[name].append(
+                    self._load_data_from_parquets(
+                        relevant_files,
+                        node_ids,
+                        start_date,
+                        end_date,
+                        node_id_col,
+                        time_col,
+                    )
                 )
-            )
-
-            coi_t_files = self._find_relevant_files(
-                self.coi_tracts_files, start_date, end_date
-            )
-            raw_data_fragments["coi_tracts"].append(
-                self._load_data_from_parquets(
-                    coi_t_files, node_ids, start_date, end_date, "road_id", "timeframe"
-                )
-            )
 
         # Consolidate and process each source
         for name, fragments in raw_data_fragments.items():
@@ -740,35 +761,29 @@ class GraphTimeSeriesLoader:
             f"--- Load complete. Found {len(static_df)} static records. Temporal DF shape: {master_temporal_df.shape} ---"
         )
 
-        # Separate temporal features from target variable (jamLevel)
-        if "jamLevel" in master_temporal_df.columns:
-            jam_target = master_temporal_df["jamLevel"]
-            master_temporal_df = master_temporal_df.drop(columns=["jamLevel"])
+        # Separate temporal features from target variable
+        if self.target_col_name in master_temporal_df.columns:
+            jam_target = master_temporal_df[self.target_col_name]
+            master_temporal_df = master_temporal_df.drop(columns=[self.target_col_name])
         else:
             jam_target = pd.Series(
-                dtype=np.float64, name="jamLevel", index=master_temporal_df.index
+                dtype=np.float64,
+                name=self.target_col_name,
+                index=master_temporal_df.index,
             )
 
         # Convert column names to snake_case
         master_temporal_df.columns = [
             self._to_snake_case(col) for col in master_temporal_df.columns
         ]
-        jam_target.name = self._to_snake_case("jamLevel")
+        jam_target.name = self._to_snake_case(self.target_col_name)
 
         # We drop the 'road_id' and 'timeframe' columns from the temporal DataFrame
         # since they are already in the index
         master_temporal_df = master_temporal_df.drop(
-            columns=["road_id", "timeframe",'id_mvi'], errors="ignore"
+            columns=["road_id", "timeframe", "id_mvi"], errors="ignore"
         )
-        master_temporal_df = master_temporal_df.reset_index()
 
-
-        for col in self.required_dynamic_columns:
-            col_snake = self._to_snake_case(col)
-            if col_snake not in master_temporal_df.columns:
-                master_temporal_df[col_snake] = 0
-
-        master_temporal_df[['road_id','timeframe',*self.required_dynamic_columns]]
         # # We reset the indices to have 'road_id' and 'timeframe' as columns
         # static_df = static_df.reset_index()
         # master_temporal_df = master_temporal_df.reset_index()
