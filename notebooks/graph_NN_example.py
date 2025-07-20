@@ -21,8 +21,10 @@ from tensorflow.keras.layers import Dense, Dropout
 from spektral.layers import GCNConv, GlobalSumPool
 from spektral.data import DisjointLoader, Dataset
 from spektral.datasets import TUDataset
+
 # from torch_geometric.datasets import TUDataset
 from collections import Counter
+
 # from spektral.utils import to_networkx
 import networkx as nx
 from networkx.convert_matrix import from_scipy_sparse_matrix
@@ -32,7 +34,7 @@ from networkx.convert_matrix import from_scipy_sparse_matrix
 from torch_geometric.utils import to_networkx
 
 # %%
-dataset = TUDataset('PROTEINS')
+dataset = TUDataset("PROTEINS")
 
 # %%
 # 2) Grab the first graph
@@ -40,12 +42,16 @@ g = dataset[0]
 
 # %%
 # 3) Inspect its raw tensors
-print("• g.x (node features) shape    :", g.x.shape)       # (N, F)
-print("• g.a (adjacency) shape       :", g.a.shape,      # (N, N)
-      f"nonzero entries = {g.a.nnz}")
-print("• g.e (edge features) shape   :",
-      g.e.shape if g.e is not None else None)            # (E, D) or None
-print("• g.y (labels) shape          :", g.y.shape)       # (N,) or (1,)
+print("• g.x (node features) shape    :", g.x.shape)  # (N, F)
+print(
+    "• g.a (adjacency) shape       :",
+    g.a.shape,  # (N, N)
+    f"nonzero entries = {g.a.nnz}",
+)
+print(
+    "• g.e (edge features) shape   :", g.e.shape if g.e is not None else None
+)  # (E, D) or None
+print("• g.y (labels) shape          :", g.y.shape)  # (N,) or (1,)
 
 
 # %%
@@ -77,13 +83,9 @@ print("Sample degree distribution:", {k: degrees[k] for k in list(degrees)[:10]}
 import matplotlib.pyplot as plt
 
 pos = nx.spring_layout(G_nx, seed=42)
-plt.figure(figsize=(6,6))
+plt.figure(figsize=(6, 6))
 nx.draw(
-    G_nx, pos,
-    node_size=20,
-    node_color='skyblue',
-    edge_color='gray',
-    with_labels=False
+    G_nx, pos, node_size=20, node_color="skyblue", edge_color="gray", with_labels=False
 )
 plt.title("Graph topology (spring layout)")
 plt.show()
@@ -104,10 +106,12 @@ print(data)
 
 # %%
 # 3. Print tensor shapes
-print("Node features x shape:", data.x.shape)           # (num_nodes, num_node_features)
-print("Edge index shape:", data.edge_index.shape)        # (2, num_edges)
-print("Edge attributes shape:",
-      data.edge_attr.shape if data.edge_attr is not None else "None")
+print("Node features x shape:", data.x.shape)  # (num_nodes, num_node_features)
+print("Edge index shape:", data.edge_index.shape)  # (2, num_edges)
+print(
+    "Edge attributes shape:",
+    data.edge_attr.shape if data.edge_attr is not None else "None",
+)
 
 # %%
 G = to_networkx(data, to_undirected=True)

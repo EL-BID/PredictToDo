@@ -42,6 +42,7 @@ def to_snake_case(string: str) -> str:
     string = re.sub(r"_+", "_", string)
     return string.strip("_")
 
+
 # === Base path ===
 processed_data_dir = "data/datos_procesados"
 
@@ -54,17 +55,23 @@ dynamic_datasets = {
         os.path.join(processed_data_dir, "irregularidades_procesadas", f)
         for f in os.listdir(f"{processed_data_dir}/irregularidades_procesadas/")
         if f.endswith(".parquet")
-    ] if os.path.exists(f"{processed_data_dir}/irregularidades_procesadas/") else [],
+    ]
+    if os.path.exists(f"{processed_data_dir}/irregularidades_procesadas/")
+    else [],
     "coi_points": [
         os.path.join(processed_data_dir, "pmts_processed/coi_puntos", f)
         for f in os.listdir(f"{processed_data_dir}/pmts_processed/coi_puntos/")
         if f.endswith(".parquet")
-    ] if os.path.exists(f"{processed_data_dir}/pmts_processed/coi_puntos/") else [],
+    ]
+    if os.path.exists(f"{processed_data_dir}/pmts_processed/coi_puntos/")
+    else [],
     "coi_tracts": [
         os.path.join(processed_data_dir, "pmts_processed/coi_tramos", f)
         for f in os.listdir(f"{processed_data_dir}/pmts_processed/coi_tramos/")
         if f.endswith(".parquet")
-    ] if os.path.exists(f"{processed_data_dir}/pmts_processed/coi_tramos/") else [],
+    ]
+    if os.path.exists(f"{processed_data_dir}/pmts_processed/coi_tramos/")
+    else [],
 }
 
 # === Track source columns ===
@@ -75,12 +82,18 @@ EXCLUDE_COLUMNS = {"road_id", "timeframe", "timeframe_start", "timeframe_end"}
 
 # === Scan columns per dataset ===
 for dataset_name in tqdm(dynamic_datasets, desc="Scanning datasets"):
-    for path in tqdm(dynamic_datasets[dataset_name], desc=f"{dataset_name}", leave=False):
+    for path in tqdm(
+        dynamic_datasets[dataset_name], desc=f"{dataset_name}", leave=False
+    ):
         if not os.path.exists(path):
             print(f"[Missing] {path}")
             continue
         try:
-            df = pd.read_parquet(path) if path.endswith(".parquet") else pd.read_csv(path)
+            df = (
+                pd.read_parquet(path)
+                if path.endswith(".parquet")
+                else pd.read_csv(path)
+            )
 
             # Standardize
             if "id_mvi" in df.columns:
@@ -96,7 +109,9 @@ for dataset_name in tqdm(dynamic_datasets, desc="Scanning datasets"):
             print(f"[Error] {dataset_name} – {path}: {e}")
 
 # === Final cleaned dictionary object ===
-DYNAMIC_FEATURE_COLUMNS = {col: sorted(list(sources)) for col, sources in column_sources.items()}
+DYNAMIC_FEATURE_COLUMNS = {
+    col: sorted(list(sources)) for col, sources in column_sources.items()
+}
 
 processed_data_dir = "data/datos_procesados"
 with open(f"{processed_data_dir}/columns_dict.pkl", "wb") as f_pkl:
@@ -109,18 +124,35 @@ dataset_filenames = {
     "bus_stops": f"{processed_data_dir}/bus_stops/bus_stops_per_road.parquet",
     "events": f"{processed_data_dir}/events/events_dataset.csv",
     "incidents": f"{processed_data_dir}/incidents/incidents_dataset.csv",
-    "irregularities": [f"{processed_data_dir}/irregularidades_procesadas/" + f for f in os.listdir(f"{processed_data_dir}/irregularidades_procesadas/") if f.endswith('.parquet')],
+    "irregularities": [
+        f"{processed_data_dir}/irregularidades_procesadas/" + f
+        for f in os.listdir(f"{processed_data_dir}/irregularidades_procesadas/")
+        if f.endswith(".parquet")
+    ],
     "coos_points": f"{processed_data_dir}/pmts_processed/coos_punto_dataset.parquet",
     "coi_parks": f"{processed_data_dir}/pmts_processed/coi_parques_dataset.parquet",
-    "coi_points": [f"{processed_data_dir}/pmts_processed/coi_puntos/" + f for f in os.listdir(f"{processed_data_dir}/pmts_processed/coi_puntos/") if f.endswith('.parquet')],
-    "coi_tracts": [f"{processed_data_dir}/pmts_processed/coi_tramos/" + f for f in os.listdir(f"{processed_data_dir}/pmts_processed/coi_tramos/") if f.endswith('.parquet')],
-    "road_state": f"{processed_data_dir}/road_state/road_state_dateset.parquet", # TODO: Should be 'dataset' no 'dateset'
-    "jams": [f"{processed_data_dir}/jams_procesados/" + f for f in os.listdir(f"{processed_data_dir}/jams_procesados/") if f.endswith('.parquet')],
+    "coi_points": [
+        f"{processed_data_dir}/pmts_processed/coi_puntos/" + f
+        for f in os.listdir(f"{processed_data_dir}/pmts_processed/coi_puntos/")
+        if f.endswith(".parquet")
+    ],
+    "coi_tracts": [
+        f"{processed_data_dir}/pmts_processed/coi_tramos/" + f
+        for f in os.listdir(f"{processed_data_dir}/pmts_processed/coi_tramos/")
+        if f.endswith(".parquet")
+    ],
+    "road_state": f"{processed_data_dir}/road_state/road_state_dateset.parquet",  # TODO: Should be 'dataset' no 'dateset'
+    "jams": [
+        f"{processed_data_dir}/jams_procesados/" + f
+        for f in os.listdir(f"{processed_data_dir}/jams_procesados/")
+        if f.endswith(".parquet")
+    ],
 }
 
 graph_filename = f"{processed_data_dir}/conectivity_graph/road_graph.pickle"
 imputation_parquet_filename = f"{processed_data_dir}/neighbor_features.parquet"
-dynamic_columns =  f"{processed_data_dir}/columns_dict.pkl"
+dynamic_columns = f"{processed_data_dir}/columns_dict.pkl"
+
 
 # Load one file from each dataset to see the column names and their types
 def load_dataset_columns(dataset_filenames):
@@ -129,15 +161,30 @@ def load_dataset_columns(dataset_filenames):
         if isinstance(filename, list):
             # If it's a list, load the first file
             filename = filename[0]
-        df = pd.read_parquet(filename) if filename.endswith('.parquet') else pd.read_csv(filename)
-        columns.update({f"{key}_{col}": str(dtype) for col, dtype in zip(df.columns, df.dtypes)})
+        df = (
+            pd.read_parquet(filename)
+            if filename.endswith(".parquet")
+            else pd.read_csv(filename)
+        )
+        columns.update(
+            {f"{key}_{col}": str(dtype) for col, dtype in zip(df.columns, df.dtypes)}
+        )
     return columns
 
-dataset_columns = load_dataset_columns(dataset_filenames)
-dataset_columns_df = pd.DataFrame(dataset_columns, index=["dtype"]).T.reset_index().rename(columns={"index": "column_name"})
-object_columns = dataset_columns_df[~ dataset_columns_df["dtype"].isin(["float64", "int64", "int32"])].column_name
 
-assert all("timeframe" in col or "road_id" in col or "id_mvi" in col for col in object_columns)
+dataset_columns = load_dataset_columns(dataset_filenames)
+dataset_columns_df = (
+    pd.DataFrame(dataset_columns, index=["dtype"])
+    .T.reset_index()
+    .rename(columns={"index": "column_name"})
+)
+object_columns = dataset_columns_df[
+    ~dataset_columns_df["dtype"].isin(["float64", "int64", "int32"])
+].column_name
+
+assert all(
+    "timeframe" in col or "road_id" in col or "id_mvi" in col for col in object_columns
+)
 
 # %%
 loader = GraphTimeSeriesLoader(
@@ -162,9 +209,9 @@ loader = GraphTimeSeriesLoader(
 # Example usage of the loader to load data for specific nodes and time windows
 nodes_to_load = ["9004322_TF.1", "50008506_TF.1", "12003262_FT.1"]
 time_windows_to_load = [
-    ('2024-09-29 23:00:00', 96, 288),
-    ('2024-08-24 15:30:00', 96, 288),
-    ('2024-02-24 01:30:00', 96, 288)
+    ("2024-09-29 23:00:00", 96, 288),
+    ("2024-08-24 15:30:00", 96, 288),
+    ("2024-02-24 01:30:00", 96, 288),
 ]
 
 # Load the data
@@ -177,7 +224,9 @@ temporal_features
 
 # %%
 # Create an instance of the custom dataset
-train_dataset = GraphTimeSeriesDataset(loader=loader, node_ids=nodes_to_load, time_windows=time_windows_to_load)
+train_dataset = GraphTimeSeriesDataset(
+    loader=loader, node_ids=nodes_to_load, time_windows=time_windows_to_load
+)
 
 # Create the DataLoader
 # This will handle batching, shuffling, and parallel data loading.
@@ -186,16 +235,18 @@ train_dataloader = DataLoader(
     train_dataset,
     batch_size=batch_size,
     shuffle=True,  # Shuffle the data at the beginning of each epoch
-    num_workers=0   # Set to > 0 to use multiprocessing for data loading
+    num_workers=0,  # Set to > 0 to use multiprocessing for data loading
 )
 
 # Iterate over the DataLoader in the training loop
 num_epochs = 3
 for epoch in range(num_epochs):
-    print(f"--- Epoch {epoch+1}/{num_epochs} ---")
-    for i, (static_batch, past_batch, future_batch, target_batch) in enumerate(train_dataloader):
+    print(f"--- Epoch {epoch + 1}/{num_epochs} ---")
+    for i, (static_batch, past_batch, future_batch, target_batch) in enumerate(
+        train_dataloader
+    ):
         static_batch = static_batch[0].squeeze(0)
-        print(f"  Batch {i+1}:")
+        print(f"  Batch {i + 1}:")
         print(f"    Static data shape: {static_batch.shape}")
         print(f"    Past data shape:   {past_batch.shape}")
         print(f"    Future data shape: {future_batch.shape}")
@@ -211,7 +262,7 @@ for epoch in range(num_epochs):
         # optimizer.step()
 
 # %%
-32*135000
+32 * 135000
 
 # %%
 static_batch.shape

@@ -38,7 +38,7 @@ dev = [
 ]
 
 [tool.ruff]
-include = ["src/**/*.py", "tests/**/*.py"]
+include = ["src/**/*.py", "tests/**/*.py", "notebooks/**/*.py"]
 
 [tool.ruff.lint]
 select = ["I"]

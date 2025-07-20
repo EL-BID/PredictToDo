@@ -26,7 +26,9 @@ import os
 import datetime as dt
 
 # %%
-jams_df = pd.read_parquet('../data/4_velocidades_waze/jams/jams_tratados_malla_completa/jams_intersections_aggregated.parquet')
+jams_df = pd.read_parquet(
+    "../data/4_velocidades_waze/jams/jams_tratados_malla_completa/jams_intersections_aggregated.parquet"
+)
 
 # %%
 jams_df
