@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Set plot style for better visualization
-plt.style.use('seaborn-v0_8-whitegrid')
+plt.style.use("seaborn-v0_8-whitegrid")
 
 
 # %%
@@ -36,6 +36,7 @@ class WeightedMSELoss(nn.Module):
        This encourages the model to maintain accuracy over a long forecast horizon.
        The weight is calculated as (1 + beta * t) for a linear increase.
     """
+
     def __init__(self, alpha: float = 1.0, beta: float = 0.05):
         """
         Initializes the WeightedMSELoss.
@@ -61,13 +62,17 @@ class WeightedMSELoss(nn.Module):
         Returns:
             torch.Tensor: The final computed loss value.
         """
-        assert y_pred.shape == y_true.shape, "Prediction and ground truth must have the same shape"
+        assert y_pred.shape == y_true.shape, (
+            "Prediction and ground truth must have the same shape"
+        )
 
         squared_error = torch.pow(y_pred - y_true, 2)
 
         # These weights are based on the ground truth values
         jam_weights = 1 + self.alpha * y_true
-        time_steps = torch.arange(y_true.shape[2], device=y_true.device, dtype=y_true.dtype)
+        time_steps = torch.arange(
+            y_true.shape[2], device=y_true.device, dtype=y_true.dtype
+        )
         time_weights = 1 + self.beta * time_steps
 
         # Reshape time_weights for broadcasting to [1, 1, T]
@@ -106,25 +111,49 @@ mse_losses_jam = []
 
 for i in range(len(true_jams)):
     # We pass single values with the correct shape
-    w_loss_1 = weighted_loss_fn_alpha_1(pred_jams_reshaped[:,:,i:i+1], true_jams_reshaped[:,:,i:i+1])
-    w_loss_2 = weighted_loss_fn_alpha_2(pred_jams_reshaped[:,:,i:i+1], true_jams_reshaped[:,:,i:i+1])
-    m_loss = mse_loss_fn(pred_jams_reshaped[:,:,i:i+1], true_jams_reshaped[:,:,i:i+1])
+    w_loss_1 = weighted_loss_fn_alpha_1(
+        pred_jams_reshaped[:, :, i : i + 1], true_jams_reshaped[:, :, i : i + 1]
+    )
+    w_loss_2 = weighted_loss_fn_alpha_2(
+        pred_jams_reshaped[:, :, i : i + 1], true_jams_reshaped[:, :, i : i + 1]
+    )
+    m_loss = mse_loss_fn(
+        pred_jams_reshaped[:, :, i : i + 1], true_jams_reshaped[:, :, i : i + 1]
+    )
 
     weighted_losses_jam_1.append(w_loss_1.item())
     weighted_losses_jam_2.append(w_loss_2.item())
     mse_losses_jam.append(m_loss.item())
-    
+
 # --- Plotting ---
 plt.figure(figsize=(10, 6))
-plt.plot(true_jams.numpy(), mse_losses_jam, label='Standard MSE Loss', linestyle='--', color='gray')
-plt.plot(true_jams.numpy(), weighted_losses_jam_1, label=f'WeightedMSELoss ($\\alpha = {weighted_loss_fn_alpha_1.alpha}$)', color='orangered', linewidth=2.5)
-plt.plot(true_jams.numpy(), weighted_losses_jam_2, label=f'WeightedMSELoss ($\\alpha = {weighted_loss_fn_alpha_2.alpha}$)', color='blue', linewidth=2.5)
+plt.plot(
+    true_jams.numpy(),
+    mse_losses_jam,
+    label="Standard MSE Loss",
+    linestyle="--",
+    color="gray",
+)
+plt.plot(
+    true_jams.numpy(),
+    weighted_losses_jam_1,
+    label=f"WeightedMSELoss ($\\alpha = {weighted_loss_fn_alpha_1.alpha}$)",
+    color="orangered",
+    linewidth=2.5,
+)
+plt.plot(
+    true_jams.numpy(),
+    weighted_losses_jam_2,
+    label=f"WeightedMSELoss ($\\alpha = {weighted_loss_fn_alpha_2.alpha}$)",
+    color="blue",
+    linewidth=2.5,
+)
 
-plt.title('Impact of Jam-Level on Loss (for a fixed error of 1.0)', fontsize=16)
-plt.xlabel('True Jam Level ($y_{true}$)', fontsize=12)
-plt.ylabel('Calculated Loss', fontsize=12)
+plt.title("Impact of Jam-Level on Loss (for a fixed error of 1.0)", fontsize=16)
+plt.xlabel("True Jam Level ($y_{true}$)", fontsize=12)
+plt.ylabel("Calculated Loss", fontsize=12)
 plt.legend(fontsize=12)
-plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+plt.grid(True, which="both", linestyle="--", linewidth=0.5)
 plt.show()
 
 # %% [markdown]
@@ -156,24 +185,53 @@ y_true_series = torch.full((1, 1, T), y_true_val)
 y_pred_series = torch.full((1, 1, T), y_pred_val)
 
 # To see the loss contribution of each timestep, we calculate it manually
-base_error_sq = (y_pred_val - y_true_val)**2 # This is 1.0
-w_loss_components_1 = base_error_sq * (1 + weighted_loss_fn_beta_1.alpha * y_true_val) * (1 + weighted_loss_fn_beta_1.beta * time_steps)
-w_loss_components_2 = base_error_sq * (1 + weighted_loss_fn_beta_2.alpha * y_true_val) * (1 + weighted_loss_fn_beta_2.beta * time_steps)
+base_error_sq = (y_pred_val - y_true_val) ** 2  # This is 1.0
+w_loss_components_1 = (
+    base_error_sq
+    * (1 + weighted_loss_fn_beta_1.alpha * y_true_val)
+    * (1 + weighted_loss_fn_beta_1.beta * time_steps)
+)
+w_loss_components_2 = (
+    base_error_sq
+    * (1 + weighted_loss_fn_beta_2.alpha * y_true_val)
+    * (1 + weighted_loss_fn_beta_2.beta * time_steps)
+)
 m_loss_components = np.full(T, base_error_sq)
 
 
 # --- Plotting ---
 plt.figure(figsize=(10, 6))
-plt.plot(time_steps, m_loss_components, label='Standard MSE Loss', linestyle='--', color='gray', marker='o')
-plt.plot(time_steps, w_loss_components_1, label=f'WeightedMSELoss ($\\beta = {weighted_loss_fn_beta_1.beta}$)', color='dodgerblue', linewidth=2.5, marker='o')
-plt.plot(time_steps, w_loss_components_2, label=f'WeightedMSELoss ($\\beta = {weighted_loss_fn_beta_2.beta}$)', color='green', linewidth=2.5, marker='o')
+plt.plot(
+    time_steps,
+    m_loss_components,
+    label="Standard MSE Loss",
+    linestyle="--",
+    color="gray",
+    marker="o",
+)
+plt.plot(
+    time_steps,
+    w_loss_components_1,
+    label=f"WeightedMSELoss ($\\beta = {weighted_loss_fn_beta_1.beta}$)",
+    color="dodgerblue",
+    linewidth=2.5,
+    marker="o",
+)
+plt.plot(
+    time_steps,
+    w_loss_components_2,
+    label=f"WeightedMSELoss ($\\beta = {weighted_loss_fn_beta_2.beta}$)",
+    color="green",
+    linewidth=2.5,
+    marker="o",
+)
 
-plt.title('Impact of Time-Step on Loss (for a fixed error)', fontsize=16)
-plt.xlabel('Future Time Step ($t$)', fontsize=12)
-plt.ylabel('Loss Contribution of that Time Step', fontsize=12)
+plt.title("Impact of Time-Step on Loss (for a fixed error)", fontsize=16)
+plt.xlabel("Future Time Step ($t$)", fontsize=12)
+plt.ylabel("Loss Contribution of that Time Step", fontsize=12)
 plt.xticks(time_steps)
 plt.legend(fontsize=12)
-plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+plt.grid(True, which="both", linestyle="--", linewidth=0.5)
 plt.show()
 
 # %% [markdown]
@@ -190,7 +248,7 @@ weighted_loss_fn = WeightedMSELoss(alpha=1.0, beta=0.1)
 
 T = 12
 time_steps_grid = np.arange(T)
-true_jams_grid = np.linspace(0, 4, 5) # Test at jam levels 0, 1, 2, 3, 4
+true_jams_grid = np.linspace(0, 4, 5)  # Test at jam levels 0, 1, 2, 3, 4
 
 loss_matrix = np.zeros((len(true_jams_grid), T))
 
@@ -204,30 +262,38 @@ for i, jam in enumerate(true_jams_grid):
         loss_matrix[i, j] = error_sq * jam_weight * time_weight
 
 fig, ax = plt.subplots(figsize=(12, 7))
-cax = ax.imshow(loss_matrix, cmap='Reds', aspect='auto')
+cax = ax.imshow(loss_matrix, cmap="Reds", aspect="auto")
 
 ax.set_xticks(np.arange(T))
 ax.set_xticklabels(time_steps_grid)
 ax.set_yticks(np.arange(len(true_jams_grid)))
 ax.set_yticklabels([f"{j:.1f}" for j in true_jams_grid])
 
-plt.title('Combined Loss Behavior (Heatmap)', fontsize=16)
-plt.xlabel('Future Time Step ($t$)', fontsize=12)
-plt.ylabel('True Jam Level ($y_{true}$)', fontsize=12)
-fig.colorbar(cax, label='Calculated Loss Value')
+plt.title("Combined Loss Behavior (Heatmap)", fontsize=16)
+plt.xlabel("Future Time Step ($t$)", fontsize=12)
+plt.ylabel("True Jam Level ($y_{true}$)", fontsize=12)
+fig.colorbar(cax, label="Calculated Loss Value")
 
 # Add text annotations
 for i in range(len(true_jams_grid)):
     for j in range(T):
-        ax.text(j, i, f'{loss_matrix[i, j]:.2f}', ha='center', va='center', color='black', fontsize=9)
-        
+        ax.text(
+            j,
+            i,
+            f"{loss_matrix[i, j]:.2f}",
+            ha="center",
+            va="center",
+            color="black",
+            fontsize=9,
+        )
+
 plt.show()
 
 # %% [markdown]
 # ### Observations
 #
-# - The heatmap clearly shows the combined effect. The loss is 
-#     - lowest at the bottom-left (low jam, near-term forecast), and 
+# - The heatmap clearly shows the combined effect. The loss is
+#     - lowest at the bottom-left (low jam, near-term forecast), and
 #     - highest at the top-right (high jam, long-term forecast).
 # - This visualization confirms that the loss function is correctly prioritizing the two conditions we wanted to specify.
 
@@ -239,6 +305,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
+
 
 class RegressionFocalLossWithTimeWeighting(nn.Module):
     """
@@ -256,7 +323,14 @@ class RegressionFocalLossWithTimeWeighting(nn.Module):
         Calculated as (1 - P(y_true))^gamma, where P(y_true) is the pre-calculated
         frequency (probability) of the true jam level.
     """
-    def __init__(self, target_dist: torch.Tensor, beta: float = 0.05, gamma: float = 1.0, device: str = 'cpu'):
+
+    def __init__(
+        self,
+        target_dist: torch.Tensor,
+        beta: float = 0.05,
+        gamma: float = 1.0,
+        device: str = "cpu",
+    ):
         """
         Initializes the loss function.
 
@@ -291,11 +365,15 @@ class RegressionFocalLossWithTimeWeighting(nn.Module):
         Returns:
             torch.Tensor: The final computed loss value.
         """
-        assert y_pred.shape == y_true.shape, "Prediction and ground truth must have the same shape"
+        assert y_pred.shape == y_true.shape, (
+            "Prediction and ground truth must have the same shape"
+        )
 
         base_loss = torch.pow(y_pred - y_true, 2)
 
-        time_steps = torch.arange(y_true.shape[2], device=self.device, dtype=y_true.dtype)
+        time_steps = torch.arange(
+            y_true.shape[2], device=self.device, dtype=y_true.dtype
+        )
         time_weights = 1 + self.beta * time_steps
 
         # Reshape for broadcasting [1, 1, T]
@@ -305,7 +383,7 @@ class RegressionFocalLossWithTimeWeighting(nn.Module):
         # Assuming y_true values are continuous from 0 to 4, and target_dist has a bin for each integer
         # We round y_true to the nearest integer to get the index
         y_true_indices = torch.round(y_true).long()
-        
+
         # Clamp indices to be within the valid range of our distribution tensor
         y_true_indices.clamp_(0, len(self.target_dist) - 1)
 
@@ -324,13 +402,9 @@ class RegressionFocalLossWithTimeWeighting(nn.Module):
 # The data distribution should be calculated from the training dataset
 # Here we create a mock dataset that is highly unbalanced:
 # 80% zeros, 10% ones, 5% twos, 3% threes, 2% fours
-mock_training_data = np.concatenate([
-    np.zeros(8000),
-    np.ones(1000),
-    np.full(500, 2),
-    np.full(300, 3),
-    np.full(200, 4)
-])
+mock_training_data = np.concatenate(
+    [np.zeros(8000), np.ones(1000), np.full(500, 2), np.full(300, 3), np.full(200, 4)]
+)
 np.random.shuffle(mock_training_data)
 
 # Calculate the distribution (frequency of each value from 0 to 4)
@@ -342,21 +416,22 @@ print("Target Distribution (Probability of each jam level)")
 print(target_distribution)
 print("-" * 55)
 
-device= "cpu"
+device = "cpu"
 criterion = RegressionFocalLossWithTimeWeighting(
-    target_dist=target_distribution,
-    beta=0.1,
-    gamma=2.0,
-    device=device
+    target_dist=target_distribution, beta=0.1, gamma=2.0, device=device
 )
 
 B, N, T = 4, 50, 12
 
 # Mock prediction and ground truth tensors
 y_pred_mock = torch.rand(B, N, T, device=device) * 4
-y_true_mock = torch.from_numpy(
-    np.random.choice([0, 1, 2, 3, 4], size=(B, N, T), p=target_distribution.numpy())
-).float().to(device)
+y_true_mock = (
+    torch.from_numpy(
+        np.random.choice([0, 1, 2, 3, 4], size=(B, N, T), p=target_distribution.numpy())
+    )
+    .float()
+    .to(device)
+)
 
 loss = criterion(y_pred_mock, y_true_mock)
 
@@ -366,18 +441,32 @@ print(f"Calculated Loss: {loss.item():.4f}")
 fig, ax1 = plt.subplots(figsize=(10, 6))
 
 jam_levels = np.arange(len(target_distribution))
-ax1.bar(jam_levels, target_distribution.cpu().numpy(), color='skyblue', label='Original Probability P(y_true)')
-ax1.set_xlabel('Jam Level', fontsize=12)
-ax1.set_ylabel('Probability (in Training Set)', color='skyblue', fontsize=12)
-ax1.tick_params(axis='y', labelcolor='skyblue')
+ax1.bar(
+    jam_levels,
+    target_distribution.cpu().numpy(),
+    color="skyblue",
+    label="Original Probability P(y_true)",
+)
+ax1.set_xlabel("Jam Level", fontsize=12)
+ax1.set_ylabel("Probability (in Training Set)", color="skyblue", fontsize=12)
+ax1.tick_params(axis="y", labelcolor="skyblue")
 ax1.set_xticks(jam_levels)
 
 ax2 = ax1.twinx()
-ax2.plot(jam_levels, criterion.focal_weights_map.cpu().numpy(), color='orangered', marker='o', linestyle='--', linewidth=2.5)
-ax2.set_ylabel(f'Focal Weight ($\\gamma = {criterion.gamma}$)', color='orangered', fontsize=12)
-ax2.tick_params(axis='y', labelcolor='orangered')
+ax2.plot(
+    jam_levels,
+    criterion.focal_weights_map.cpu().numpy(),
+    color="orangered",
+    marker="o",
+    linestyle="--",
+    linewidth=2.5,
+)
+ax2.set_ylabel(
+    f"Focal Weight ($\\gamma = {criterion.gamma}$)", color="orangered", fontsize=12
+)
+ax2.tick_params(axis="y", labelcolor="orangered")
 
-plt.title('Focal Weighting vs. Target Probability', fontsize=16)
+plt.title("Focal Weighting vs. Target Probability", fontsize=16)
 fig.tight_layout()
 plt.show()
 
@@ -390,7 +479,7 @@ plt.show()
 # - **Time-Step Weighting** is still applieds to give an increasing penalty to predictions further in the future, encouraging better long-term forecasting. It's controlled by a `beta` ($\beta$) parameter.
 
 # %% [markdown]
-#  
+#
 
 # %% [markdown]
 #
