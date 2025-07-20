@@ -181,6 +181,37 @@ for epoch in range(1):
             print(sum(loss_list) / len(loss_list))
     print("Epoch {} train RMSE: {:.4f}".format(epoch, sum(loss_list) / len(loss_list)))
 
+# %%
+model.eval()
+
+step = 0
+# Store for analysis
+total_loss = []
+for encoder_inputs, labels in test_loader:
+    # Get model predictions
+    y_hat = model(encoder_inputs, static_edge_index)
+    # Mean squared error
+    loss = loss_fn(y_hat, labels)
+    total_loss.append(loss.item())
+    # Store for analysis below
+    # test_labels.append(labels)
+    # predictions.append(y_hat)
+
+
+print("Test MSE: {:.4f}".format(sum(total_loss) / len(total_loss)))
+
+# %%
+sensor = 123
+timestep = 5
+preds = np.asarray([pred[sensor][timestep].detach().cpu().numpy() for pred in y_hat])
+labs = np.asarray([label[sensor][timestep].cpu().numpy() for label in labels])
+print("Data points:,", preds.shape)
+
+plt.figure(figsize=(20, 5))
+sns.lineplot(data=preds, label="Predicted")
+sns.lineplot(data=labs, label="True")
+plt.show()
+
 # %% [markdown]
 # ## Neighbor Batching
 
