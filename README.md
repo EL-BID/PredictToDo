@@ -30,8 +30,11 @@ To render a paired `.py` script back to its `.ipynb` format and synchronize its
 uv run jupytext --sync notebooks/<notebook_name>.py
 ```
 
+For convenience, these commands are in the `Makefile` described below.
 
 ## Using the `Makefile`
 - Run `make test` to run all the tests inside the `tests/` directory.
 - Run `make test_cov` to get the test coverage report.
 - Run `make format` to format all the code using `ruff`.
+- Run `make to_jupyter` to convert all `.py` files in the `notebooks/` directory to their paired `.ipynb` notebooks.
+- Run `make from_jupyter` to convert all `.ipynb` notebooks to their `.py` format ready to be pushed to the repository.

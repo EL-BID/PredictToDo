@@ -8,12 +8,14 @@
 
 TEST_DIR=./tests
 SOURCE_DIR=./src
+NOTEBOOKS_DIR=./notebooks
 
 # Define tool shortcuts for consistency and easy updates
 UV=uv run
 PYTEST=$(UV) pytest
 RUFF=$(UV) ruff
 CODESPELL=$(UV) codespell
+JUPYTEXT=$(UV) jupytext
 
 # ------------------------------------------------------------------------------
 # CODE QUALITY (Formatting & Linting)
@@ -53,3 +55,17 @@ test-cov:
 	@echo "=> Running tests and generating coverage report with pytest-cov..."
 	$(PYTEST) --cov=$(SOURCE_DIR) --cov-report=term-missing --cov-report=html $(TEST_DIR)
 	@echo "\nCoverage report generated. Open 'htmlcov/index.html' to view."
+
+# ------------------------------------------------------------------------------
+# JUPYTER NOTEBOOKS
+# ------------------------------------------------------------------------------
+
+from_jupyter:
+	@echo "=> Pairing all Jupyter notebooks with their Python scripts..."
+	$(JUPYTEXT) --set-formats ipynb,py:percent $(NOTEBOOKS_DIR)/*.ipynb
+
+to_jupyter:
+	@echo "=> Converting all Python scripts back to Jupyter notebooks..."
+	@for pyfile in $(NOTEBOOKS_DIR)/*.py; do \
+		$(JUPYTEXT) --sync "$$pyfile"; \
+	done
