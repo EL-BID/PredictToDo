@@ -360,81 +360,6 @@ wheels = [
 ]
 
 [[package]]
-name = "congestion-bogota"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "awscli" },
-    { name = "dask" },
-    { name = "dotenv" },
-    { name = "folium" },
-    { name = "geopandas" },
-    { name = "mapclassify" },
-    { name = "networkx" },
-    { name = "numpy" },
-    { name = "pyarrow" },
-    { name = "tables" },
-    { name = "tabulate" },
-    { name = "torch" },
-    { name = "torch-geometric" },
-    { name = "torch-geometric-temporal" },
-    { name = "torch-scatter" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "codespell" },
-    { name = "coverage" },
-    { name = "ipykernel" },
-    { name = "jupyter" },
-    { name = "jupytext" },
-    { name = "matplotlib" },
-    { name = "plotly" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-mock" },
-    { name = "ruff" },
-    { name = "seaborn" },
-    { name = "tqdm" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "awscli", specifier = ">=1.40.36" },
-    { name = "dask", specifier = ">=2025.7.0" },
-    { name = "dotenv", specifier = ">=0.9.9" },
-    { name = "folium", specifier = ">=0.20.0" },
-    { name = "geopandas", specifier = ">=1.1.0" },
-    { name = "mapclassify", specifier = ">=2.9.0" },
-    { name = "networkx", specifier = ">=3.5" },
-    { name = "numpy", specifier = ">=2.3.0" },
-    { name = "pyarrow", specifier = ">=20.0.0" },
-    { name = "tables", specifier = ">=3.10.2" },
-    { name = "tabulate", specifier = ">=0.9.0" },
-    { name = "torch", specifier = ">=2.7.1" },
-    { name = "torch-geometric", specifier = ">=2.6.1" },
-    { name = "torch-geometric-temporal", specifier = ">=0.56.1" },
-    { name = "torch-scatter", specifier = ">=2.1.2" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "codespell", specifier = ">=2.4.1" },
-    { name = "coverage", specifier = ">=7.9.1" },
-    { name = "ipykernel", specifier = ">=6.29.5" },
-    { name = "jupyter", specifier = ">=1.1.1" },
-    { name = "jupytext", specifier = ">=1.17.2" },
-    { name = "matplotlib", specifier = ">=3.10.3" },
-    { name = "plotly", specifier = ">=6.1.2" },
-    { name = "pytest", specifier = ">=8.4.0" },
-    { name = "pytest-cov", specifier = ">=6.2.1" },
-    { name = "pytest-mock", specifier = ">=3.14.1" },
-    { name = "ruff", specifier = ">=0.12.0" },
-    { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "tqdm", specifier = ">=4.67.1" },
-]
-
-[[package]]
 name = "contourpy"
 version = "1.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -738,6 +663,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz", hash = "sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1", size = 101250 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515 },
+]
+
+[[package]]
+name = "h5py"
+version = "3.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5d/57/dfb3c5c3f1bf5f5ef2e59a22dec4ff1f3d7408b55bfcefcfb0ea69ef21c6/h5py-3.14.0.tar.gz", hash = "sha256:2372116b2e0d5d3e5e705b7f663f7c8d96fa79a4052d250484ef91d24d6a08f4", size = 424323 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6c/c2/7efe82d09ca10afd77cd7c286e42342d520c049a8c43650194928bcc635c/h5py-3.14.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:aa4b7bbce683379b7bf80aaba68e17e23396100336a8d500206520052be2f812", size = 3289245 },
+    { url = "https://files.pythonhosted.org/packages/4f/31/f570fab1239b0d9441024b92b6ad03bb414ffa69101a985e4c83d37608bd/h5py-3.14.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:ef9603a501a04fcd0ba28dd8f0995303d26a77a980a1f9474b3417543d4c6174", size = 2807335 },
+    { url = "https://files.pythonhosted.org/packages/0d/ce/3a21d87896bc7e3e9255e0ad5583ae31ae9e6b4b00e0bcb2a67e2b6acdbc/h5py-3.14.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e8cbaf6910fa3983c46172666b0b8da7b7bd90d764399ca983236f2400436eeb", size = 4700675 },
+    { url = "https://files.pythonhosted.org/packages/e7/ec/86f59025306dcc6deee5fda54d980d077075b8d9889aac80f158bd585f1b/h5py-3.14.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d90e6445ab7c146d7f7981b11895d70bc1dd91278a4f9f9028bc0c95e4a53f13", size = 4921632 },
+    { url = "https://files.pythonhosted.org/packages/3f/6d/0084ed0b78d4fd3e7530c32491f2884140d9b06365dac8a08de726421d4a/h5py-3.14.0-cp313-cp313-win_amd64.whl", hash = "sha256:ae18e3de237a7a830adb76aaa68ad438d85fe6e19e0d99944a3ce46b772c69b3", size = 2852929 },
 ]
 
 [[package]]
@@ -2541,6 +2482,83 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/3f/f4/4a80cd6ef364b2e8b65b15816a843c0980f7a5a2b4dc701fc574952aa19f/soupsieve-2.7.tar.gz", hash = "sha256:ad282f9b6926286d2ead4750552c8a6142bc4c783fd66b0293547c8fe6ae126a", size = 103418 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/9c/0e6afc12c269578be5c0c1c9f4b49a8d32770a080260c333ac04cc1c832d/soupsieve-2.7-py3-none-any.whl", hash = "sha256:6e60cc5c1ffaf1cebcc12e8188320b72071e922c2e897f737cadce79ad5d30c4", size = 36677 },
+]
+
+[[package]]
+name = "src"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "awscli" },
+    { name = "dask" },
+    { name = "dotenv" },
+    { name = "folium" },
+    { name = "geopandas" },
+    { name = "h5py" },
+    { name = "mapclassify" },
+    { name = "networkx" },
+    { name = "numpy" },
+    { name = "pyarrow" },
+    { name = "tables" },
+    { name = "tabulate" },
+    { name = "torch" },
+    { name = "torch-geometric" },
+    { name = "torch-geometric-temporal" },
+    { name = "torch-scatter" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "codespell" },
+    { name = "coverage" },
+    { name = "ipykernel" },
+    { name = "jupyter" },
+    { name = "jupytext" },
+    { name = "matplotlib" },
+    { name = "plotly" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "ruff" },
+    { name = "seaborn" },
+    { name = "tqdm" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "awscli", specifier = ">=1.40.36" },
+    { name = "dask", specifier = ">=2025.7.0" },
+    { name = "dotenv", specifier = ">=0.9.9" },
+    { name = "folium", specifier = ">=0.20.0" },
+    { name = "geopandas", specifier = ">=1.1.0" },
+    { name = "h5py", specifier = ">=3.14.0" },
+    { name = "mapclassify", specifier = ">=2.9.0" },
+    { name = "networkx", specifier = ">=3.5" },
+    { name = "numpy", specifier = ">=2.3.0" },
+    { name = "pyarrow", specifier = ">=20.0.0" },
+    { name = "tables", specifier = ">=3.10.2" },
+    { name = "tabulate", specifier = ">=0.9.0" },
+    { name = "torch", specifier = ">=2.7.1" },
+    { name = "torch-geometric", specifier = ">=2.6.1" },
+    { name = "torch-geometric-temporal", specifier = ">=0.56.1" },
+    { name = "torch-scatter", specifier = ">=2.1.2" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "codespell", specifier = ">=2.4.1" },
+    { name = "coverage", specifier = ">=7.9.1" },
+    { name = "ipykernel", specifier = ">=6.29.5" },
+    { name = "jupyter", specifier = ">=1.1.1" },
+    { name = "jupytext", specifier = ">=1.17.2" },
+    { name = "matplotlib", specifier = ">=3.10.3" },
+    { name = "plotly", specifier = ">=6.1.2" },
+    { name = "pytest", specifier = ">=8.4.0" },
+    { name = "pytest-cov", specifier = ">=6.2.1" },
+    { name = "pytest-mock", specifier = ">=3.14.1" },
+    { name = "ruff", specifier = ">=0.12.0" },
+    { name = "seaborn", specifier = ">=0.13.2" },
+    { name = "tqdm", specifier = ">=4.67.1" },
 ]
 
 [[package]]
