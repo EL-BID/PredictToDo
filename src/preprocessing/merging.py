@@ -2,8 +2,8 @@ import os
 import pickle as pkl
 from typing import Any, List
 
-import networkx as nx
 import h5py
+import networkx as nx
 import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
@@ -448,6 +448,27 @@ if __name__ == "__main__":
         return_df=False,
     )
     del coi_tracts_df  # Clean up memory
+
+    # Jams
+    jams_filenames = [
+        f"{processed_data_dir}/jams_procesados/" + f
+        for f in os.listdir(f"{processed_data_dir}/jams_procesados/")
+        if f.endswith(".parquet")
+    ]
+    jams_df = pd.concat(
+        [pd.read_parquet(f) for f in jams_filenames],
+        ignore_index=False,
+    ).fillna(0)[["road_id", "timeframe", "level_mean"]]
+
+    dataset_generator.temporal_dataframe_to_coo(
+        jams_df.rename(columns={"level_mean": "mean_jam_level"}),
+        output_path=f"{processed_data_dir}/sparse_datasets/jams_dataset.h5",
+        has_index=False,
+        node_col="road_id",
+        timeframe_col="timeframe",
+        return_df=False,
+    )
+    del jams_df  # Clean up memory
 
     print("---------------------------------------------------")
     print("----- Sparse datasets generated successfully. -----")
