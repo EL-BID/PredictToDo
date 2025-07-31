@@ -180,6 +180,7 @@ cython_debug/
 *.dbf
 *.cpg
 *.prj
+*.h5
 
 data/
 datos/
