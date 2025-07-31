@@ -18,25 +18,27 @@
 
 # %%
 import os
-import numpy as np
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import networkx as nx
 
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+import seaborn as sns
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
+from torch_geometric_temporal.dataset import METRLADatasetLoader
 from torch_geometric_temporal.nn.recurrent import A3TGCN2
 from torch_geometric_temporal.signal import temporal_signal_split
-from torch_geometric_temporal.dataset import METRLADatasetLoader
 
 shuffle = True
 batch_size = 32
 DEVICE = "cpu"
-num_timesteps_in = 30
-num_timesteps_out = 6
+num_timesteps_in = 10
+num_timesteps_out = 3
 loader = METRLADatasetLoader(raw_data_dir=os.path.join(os.getcwd(), "notebooks/data"))
+
+# %load_ext autoreload
+# %autoreload 2
 
 # %%
 dataset = loader.get_dataset(
@@ -51,8 +53,18 @@ dataset = loader.get_dataset(
 # self.additional_feature_keys
 
 # %%
+dataset.edge_index.max()
+
+# %%
 print("Shape of edge_index:", np.array(dataset.edge_index).shape)
-print("Shape of edge_weight:", np.array(dataset.edge_weight).shape)
+# print("Shape of edge_weight:", np.array(dataset.edge_weight).shape)
+print("Shape of features:", np.array(dataset.features).shape)
+print("Shape of targets:", np.array(dataset.targets).shape)
+print("Additional feature keys:", dataset.additional_feature_keys)
+
+# %%
+print("Shape of edge_index:", np.array(dataset.edge_index).shape)
+# print("Shape of edge_weight:", np.array(dataset.edge_weight).shape)
 print("Shape of features:", np.array(dataset.features).shape)
 print("Shape of targets:", np.array(dataset.targets).shape)
 print("Additional feature keys:", dataset.additional_feature_keys)
