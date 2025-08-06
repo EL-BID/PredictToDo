@@ -79,6 +79,7 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*.ipynb
 
 # IPython
 profile_default/
@@ -179,6 +180,7 @@ cython_debug/
 *.dbf
 *.cpg
 *.prj
+*.h5
 
 data/
 datos/
