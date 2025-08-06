@@ -16,16 +16,25 @@ uv run -- dotenv run -- aws s3 sync s3://ine-projects-incoming-data/congestion-p
 - To synchronize the local environment with the requirements in `uv.lock`, run the command `uv sync`.
 - A full list of `uv` commands can be found [here](https://docs.astral.sh/uv/reference/cli/).
 
+## Rendering Jupyter notebooks
+To avoid large Jupyter files in the repository, we use `jupytext` to transform the `.ipynb` files to plain text documents.
+This allows easy editing and clear version control, as well as a largely reduced repository size.
+
+To pair all `.ipynb` in the directory to `.py` files, run:
+```
+uv run jupytext --set-formats ipynb,py:percent notebooks/*.ipynb
+```
+
+To render a paired `.py` script back to its `.ipynb` format and synchronize its changes, run:
+```
+uv run jupytext --sync notebooks/<notebook_name>.py
+```
+
+For convenience, these commands are in the `Makefile` described below.
+
 ## Using the `Makefile`
 - Run `make test` to run all the tests inside the `tests/` directory.
 - Run `make test_cov` to get the test coverage report.
 - Run `make format` to format all the code using `ruff`.
-
-## Reminders
-- The first notebook that defines the skeleton of the graph is `graphs_construction.ipynb` (uses `2_Estructura_via`).
-- The data in `3_clima` has to be sent again by the Bogota people.
-- The second notebook is `irregularities_processing.ipynb` builds the irregularities in `datos_procesados/irregularidades_procesadas` from `4_velocidades_waze/irregularidades`.
-- The folders `4_velocidades_waze/jams` and `4_velocidades_waze/velocidades` already has the processed data (for the former, the code is in `tratamiento_jamsBID.ipynb`).
-- `5_volumenes_sema` has not been dealt with yet (it only has information about the spots where there are traffic lights--we can't use it, at least easily).
-- `incidentsPreprocessing.ipynb` processes the data in `7_incidentes` into `datos_procesados/incidents/`.
-- 
+- Run `make to_jupyter` to convert all `.py` files in the `notebooks/` directory to their paired `.ipynb` notebooks.
+- Run `make from_jupyter` to convert all `.ipynb` notebooks to their `.py` format ready to be pushed to the repository.
