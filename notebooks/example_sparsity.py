@@ -24,6 +24,8 @@ from src.sparse_dataloader import TrafficDataset
 # %load_ext autoreload
 # %autoreload 2
 
+# %load_ext line_profiler
+
 # %%
 processed_data_dir = "data/datos_procesados"
 sparse_data_dir = f"{processed_data_dir}/sparse_datasets"
@@ -47,6 +49,7 @@ traffic_dataset = TrafficDataset(
     target_data_path=target_data_filename,
     in_timesteps=in_timesteps,
     out_timesteps=out_timesteps,
+    node_batch_size=1024,
 )
 
 # %%
@@ -67,7 +70,6 @@ print("-" * 40)
 # Get a single batch
 sample_batch = next(iter(traffic_dataloader))
 
-# %%
 # Inspect the batch
 print(f"Edge index shape (batch_size, 2, num_edges):")
 print(f"{sample_batch['edge_index'].shape}")
@@ -84,15 +86,74 @@ print(f"Target shape (batch_size, num_nodes, out_timesteps):")
 print(f"{sample_batch['y'].shape}")
 
 # %%
-# Flatten the (node, time) multi-index into a single row index
-# row_idx = node_idx * num_timesteps + time_idx
+# %lprun -f TrafficDataset.__getitem__ next(iter(traffic_dataloader))
 
-# dynamic_features = SparseTensor(
-#     row=Tensor(row_idx).long(),
-#     col=Tensor(feature_idx).long(),
-#     value=Tensor(values),
-#     sparse_sizes=(num_nodes, num_features),
-# )
+# %% [markdown]
+# ## Compare sorted search vs. naive approach
+
+# %%
+import h5py
+import numpy as np
+
+file_path = traffic_dataset.dynamic_data_paths[2]
+idx = 100
+
+
+file_indices = np.zeros((traffic_dataset.total_timesteps_in_data - 1, 2), dtype=int)
+with h5py.File(file_path, "r") as f:
+    # Reading the entire time_idx column can be slow
+    time_column = f["data"][:, 1]
+    file_indices[:, 0] = np.searchsorted(
+        time_column, np.arange(traffic_dataset.total_timesteps_in_data - 1), side="left"
+    )
+    file_indices[:, 1] = np.searchsorted(
+        time_column,
+        np.arange(traffic_dataset.total_timesteps_in_data - 1),
+        side="right",
+    )
+
+
+def demo_no_sorting(idx):
+    input_start_time = idx
+    input_end_time = input_start_time + 50
+    with h5py.File(file_path, "r") as f:
+        # Reading the entire time_idx column can be slow
+        all_time_idx = f["data"][:, 1]
+        # Find the rows that fall within our time window
+        # TODO: If the data is sorted by time, np.searchsorted can make this much faster
+        rows_in_window_mask = (all_time_idx >= input_start_time) & (
+            all_time_idx < input_end_time
+        )
+        relevant_data = f["data"][rows_in_window_mask]
+        del all_time_idx, rows_in_window_mask  # Free memory
+    return relevant_data
+
+
+def demo_sorted(idx):
+    input_start_time = idx
+    input_end_time = input_start_time + 50
+    with h5py.File(file_path, "r") as f:
+        start_index = file_indices[input_start_time, 0]
+        end_index = file_indices[input_end_time, 1]
+        relevant_data = f["data"][start_index:end_index]
+    return relevant_data
+
+
+relevant_data_no_sorting = demo_no_sorting(idx)
+relevant_data_sorted = demo_sorted(idx)
+
+assert (relevant_data_sorted == relevant_data_no_sorting).mean() == 1.0, (
+    "Data mismatch between sorted and unsorted methods"
+)
+
+# %%
+# %lprun -f demo_no_sorting demo_no_sorting(idx)
+
+# %%
+# %lprun -f demo_sorted demo_sorted(idx)
+
+# %%
+print("Improvement of", round(100 - (0.000815 / 2.35875) * 100, 2), "%")
 
 # %% [markdown]
 # ## How does sparsity work?
