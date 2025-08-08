@@ -93,6 +93,10 @@ class SparseDatasetGenerator:
         long_df.loc[:, "time_idx"] = long_df["time_idx"].astype(int)
         long_df.loc[:, "feature_idx"] = long_df["feature_idx"].astype(int)
 
+        # Sort by time_idx
+        print("Sorting DataFrame by time_idx...")
+        long_df = long_df.sort_values(by="time_idx", ascending=True)
+
         print(f"Found and processed {len(long_df)} non-zero entries.")
         # Save the DataFrame to an HDF5 file
         with h5py.File(output_path, "w") as f:
