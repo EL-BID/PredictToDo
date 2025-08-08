@@ -5,7 +5,7 @@ import h5py
 import numpy as np
 import torch
 from scipy.sparse import coo_matrix
-from torch.utils.data import Dataset
+from torch_geometric.data import Data, Dataset
 from torch_geometric.utils import subgraph
 from torch_geometric.utils.convert import from_networkx
 
@@ -175,7 +175,7 @@ class TrafficDataset(Dataset):
         )
         return num_time_windows * self.num_node_batches
 
-    def _get_time_and_node_indices(self, idx: int) -> tuple[int, torch.Tensor]:
+    def _get_time_and_node_indices(self, idx) -> tuple[int, torch.Tensor]:
         """
         Calculates the time window index and the tensor of node indices
         for a given flat dataset index.
@@ -290,16 +290,18 @@ class TrafficDataset(Dataset):
                 relabel_nodes=True,
                 num_nodes=self.num_nodes,
             )
-            return {
-                "x_static": self.static_features[node_indices],
-                "x_dynamic": x_dynamic[node_indices],
-                "y": y[node_indices],
-                "edge_index": edge_index_sub,
-            }
+            return Data(
+                x_static=self.static_features[node_indices],
+                x_dynamic=x_dynamic[node_indices],
+                y=y[node_indices],
+                edge_index=edge_index_sub,
+                num_nodes=self.num_nodes,
+            )
         else:
-            return {
-                "x_static": self.static_features,
-                "x_dynamic": x_dynamic,
-                "y": y,
-                "edge_index": self.edge_index,
-            }
+            return Data(
+                x_static=self.static_features,
+                x_dynamic=x_dynamic,
+                y=y,
+                edge_index=self.edge_index,
+                num_nodes=self.num_nodes,
+            )
