@@ -242,10 +242,3 @@ class TrafficDataset(Dataset):
             "y": y,
             "edge_index": self.edge_index,
         }
-
-    # TODO: This would be a safe way to ensure files are closed, but it returns
-    # an error as stated in this GitHub issue: https://github.com/h5py/h5py/issues/2237
-    # def __del__(self):
-    #     """Ensures HDF5 files are closed when the dataset object is deleted."""
-    #     for f in self.dynamic_files:
-    #         f.close()
