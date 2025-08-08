@@ -64,10 +64,9 @@ class TrafficDataset(Dataset):
         for file_path in self.dynamic_data_paths + [self.target_data_path]:
             with h5py.File(file_path, "r") as hf:
                 hf_data = hf["data"]
-                assert isinstance(hf_data, np.ndarray)
 
                 # Assuming all files have the same number of nodes and time steps
-                if hf_data.shape[0] > 0:
+                if hf_data.shape[0] > 0:  # type: ignore
                     self.total_timesteps_in_data = max(
                         self.total_timesteps_in_data,
                         int(hf_data[:, 1].max() + 1),  # type: ignore
