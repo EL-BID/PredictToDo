@@ -78,6 +78,9 @@ class TrafficDataset(Dataset):
                         self.dynamic_feature_dims.append(0)
 
         self.num_dynamic_features = sum(self.dynamic_feature_dims)
+        self.dynamic_data_indices, self.target_data_indices = (
+            self._precompute_time_indices()
+        )
 
         print(f"Dataset initialized.")
         print(f"Number of nodes: {self.num_nodes}")
@@ -107,6 +110,41 @@ class TrafficDataset(Dataset):
 
         return torch.from_numpy(sparse_matrix.toarray()).float()
 
+    def _precompute_time_indices(
+        self,
+    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+        """
+        Pre-computes the start and end row indices for every possible sample
+        in each HDF5 file. This is done once at initialization to speed up
+        __getitem__.
+        """
+        dynamic_data_indices = {}
+        target_data_indices = {}
+
+        for file_path in self.dynamic_data_paths + [self.target_data_path]:
+            print(f"Precomputing time indices for {file_path}...")
+            file_indices = np.zeros((self.total_timesteps_in_data - 1, 2), dtype=int)
+            # This assumes that the time column is the second column in the data
+            # and that it is sorted. If not, we would need to sort it first.
+            with h5py.File(file_path, "r") as f:
+                time_column = f["data"][:, 1]
+                file_indices[:, 0] = np.searchsorted(
+                    time_column,
+                    np.arange(self.total_timesteps_in_data - 1),
+                    side="left",
+                )
+                file_indices[:, 1] = np.searchsorted(
+                    time_column,
+                    np.arange(self.total_timesteps_in_data - 1),
+                    side="right",
+                )
+            if file_path in self.dynamic_data_paths:
+                dynamic_data_indices[file_path] = file_indices
+            else:
+                target_data_indices[file_path] = file_indices
+        print("Time indices precomputation completed.")
+        return dynamic_data_indices, target_data_indices
+
     def __len__(self):
         """Returns the total number of samples (sliding windows) in the dataset."""
         if self.total_timesteps_in_data < self.total_timesteps_window:
@@ -119,7 +157,7 @@ class TrafficDataset(Dataset):
         time window from the HDF5 files on-the-fly.
         """
         input_start_time = idx
-        input_end_time = input_start_time + self.in_timesteps
+        input_end_time = input_start_time + self.in_timesteps - 1
 
         # Initialize a dense tensor for the dynamic features of this window
         x_dynamic = torch.zeros(
@@ -135,15 +173,9 @@ class TrafficDataset(Dataset):
                 continue
 
             with h5py.File(file_path, "r") as f:
-                # Reading the entire time_idx column can be slow
-                all_time_idx = f["data"][:, 1]
-                # Find the rows that fall within our time window
-                # TODO: If the data is sorted by time, np.searchsorted can make this much faster
-                rows_in_window_mask = (all_time_idx >= input_start_time) & (
-                    all_time_idx < input_end_time
-                )
-                relevant_data = f["data"][rows_in_window_mask]
-                del all_time_idx, rows_in_window_mask  # Free memory
+                start_index = self.dynamic_data_indices[file_path][input_start_time, 0]
+                end_index = self.dynamic_data_indices[file_path][input_end_time, 1]
+                relevant_data = f["data"][start_index:end_index]
 
             print("Found", relevant_data.shape[0], "relevant entries.\n")
 
@@ -166,17 +198,18 @@ class TrafficDataset(Dataset):
 
         # Now we load the target variable
         target_start_time = input_end_time
-        target_end_time = target_start_time + self.out_timesteps
+        target_end_time = target_start_time + self.out_timesteps - 1
 
         y = torch.zeros((self.num_nodes, self.out_timesteps))
 
         with h5py.File(file_path, "r") as f:
-            target_all_time_idx = f["data"][:, 1]
-            target_rows_mask = (target_all_time_idx >= target_start_time) & (
-                target_all_time_idx < target_end_time
-            )
-            target_relevant_data = f["data"][target_rows_mask]
-            del target_all_time_idx, target_rows_mask  # Free memory
+            start_index = self.target_data_indices[self.target_data_path][
+                target_start_time, 0
+            ]
+            end_index = self.target_data_indices[self.target_data_path][
+                target_end_time, 1
+            ]
+            target_relevant_data = f["data"][start_index:end_index]
 
         print("Found", target_relevant_data.shape[0], "relevant target entries.\n")
 
