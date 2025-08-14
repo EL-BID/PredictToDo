@@ -22,9 +22,11 @@ class TrafficDataset(Dataset):
         graph_path: str,
         static_data_path: str,
         dynamic_data_paths: list[str],
+        metadata_paths: list[str],
         target_data_path: str,
         in_timesteps: int,
         out_timesteps: int,
+        future_features: list[str],
         node_batch_size: int | None = None,
     ):
         """
@@ -44,6 +46,7 @@ class TrafficDataset(Dataset):
         self.dynamic_data_paths = dynamic_data_paths
         self.target_data_path = target_data_path
         self.node_batch_size = node_batch_size
+        self.future_features = future_features
 
         # Load static data and graph
         # These are assumed to be small enough to fit in memory
@@ -92,17 +95,41 @@ class TrafficDataset(Dataset):
                         self.dynamic_feature_dims.append(0)
 
         self.num_dynamic_features = sum(self.dynamic_feature_dims)
+        self.num_dynamic_future_features = len(self.future_features)
         self.dynamic_data_indices, self.target_data_indices = (
             self._precompute_time_indices()
         )
+        self.future_features_idxs = self._get_future_dynamic_feature_idxs(
+            metadata_paths
+        )
 
-        print(f"Dataset initialized.")
-        print(f"Number of nodes: {self.num_nodes}")
-        print(f"Node batch size: {self.node_batch_size or 'All nodes'}")
-        print(f"Number of node batches: {self.num_node_batches}")
-        print(f"Static features per node: {self.num_static_features}")
-        print(f"Dynamic features per node: {self.num_dynamic_features}")
-        print(f"Total time steps in data: {self.total_timesteps_in_data}")
+        # print(f"Dataset initialized.")
+        # print(f"Number of nodes: {self.num_nodes}")
+        # print(f"Node batch size: {self.node_batch_size or 'All nodes'}")
+        # print(f"Number of node batches: {self.num_node_batches}")
+        # print(f"Static features per node: {self.num_static_features}")
+        # print(f"Dynamic features per node: {self.num_dynamic_features}")
+        # print(f"Total time steps in data: {self.total_timesteps_in_data}")
+
+    def _get_future_dynamic_feature_idxs(
+        self, metadata_paths: list[str]
+    ) -> dict[str, list[int]]:
+        future_features_idxs: dict[str, list[int]] = {}
+        for dataset_file, metadata_file in zip(self.dynamic_data_paths, metadata_paths):
+            with open(metadata_file, "rb") as f:
+                metadata = pickle.load(f)
+            features_in_this_file = [
+                feature
+                for feature in self.future_features
+                if feature in metadata["feature_idx_map"]
+            ]
+            if features_in_this_file:
+                feature_idxs = [
+                    metadata["feature_idx_map"][feature]
+                    for feature in features_in_this_file
+                ]
+                future_features_idxs.update({dataset_file: feature_idxs})
+        return future_features_idxs
 
     def _load_graph(self, graph_path):
         """Loads the graph from a pickle file."""
@@ -139,7 +166,7 @@ class TrafficDataset(Dataset):
         target_data_indices = {}
 
         for file_path in self.dynamic_data_paths + [self.target_data_path]:
-            print(f"Precomputing time indices for {file_path}...")
+            # print(f"Precomputing time indices for {file_path}...")
             file_indices = np.zeros((self.total_timesteps_in_data - 1, 2), dtype=int)
             # This assumes that the time column is the second column in the data
             # and that it is sorted. If not, we would need to sort it first.
@@ -160,7 +187,7 @@ class TrafficDataset(Dataset):
                 dynamic_data_indices[file_path] = file_indices
             else:
                 target_data_indices[file_path] = file_indices
-        print("Time indices precomputation completed.")
+        # print("Time indices precomputation completed.")
         return dynamic_data_indices, target_data_indices
 
     def __len__(self):
@@ -194,56 +221,137 @@ class TrafficDataset(Dataset):
 
         return time_idx, node_indices
 
+    def _get_dynamic_past_features(
+        self,
+        x_dynamic_past: torch.Tensor,
+        file_path: str,
+        input_start_time: int,
+        input_end_time: int,
+        feature_offset_past: int,
+    ) -> torch.Tensor:
+        with h5py.File(file_path, "r") as f:
+            # We first fetch the relevant data for the past
+            start_index = self.dynamic_data_indices[file_path][input_start_time, 0]
+            end_index = self.dynamic_data_indices[file_path][input_end_time, 1]
+            relevant_data_past = f["data"][start_index:end_index]  # type: ignore
+            assert isinstance(relevant_data_past, np.ndarray)
+
+        # print("Found", relevant_data.shape[0], "relevant entries.\n")
+
+        if relevant_data_past.shape[0] > 0:
+            node_idx, time_idx, feature_idx, values = (
+                relevant_data_past[:, 0].astype(int),
+                relevant_data_past[:, 1].astype(int) - input_start_time,
+                # Add offset to feature index (each file has its own feature set
+                # so we need to offset them to avoid collisions)
+                relevant_data_past[:, 2].astype(int) + feature_offset_past,
+                relevant_data_past[:, 3],
+            )
+            del relevant_data_past  # Free memory
+            # Populate the dense tensor for the window
+            x_dynamic_past[node_idx, time_idx, feature_idx] = torch.from_numpy(
+                values
+            ).float()
+
+        return x_dynamic_past
+
+    def _get_dynamic_future_features(
+        self,
+        x_dynamic_future,
+        file_path: str,
+        target_start_time: int,
+        target_end_time: int,
+        feature_offset_future: int,
+    ) -> torch.Tensor:
+        with h5py.File(file_path, "r") as f:
+            # Now the same but for the future
+            future_feature_idxs = self.future_features_idxs[file_path]
+
+            start_index = self.dynamic_data_indices[file_path][target_start_time, 0]
+            end_index = self.dynamic_data_indices[file_path][target_end_time, 1]
+            relevant_data_future = f["data"][start_index:end_index]  # type: ignore
+            assert isinstance(relevant_data_future, np.ndarray)
+            # Get only the relevant features
+            relevant_data_future = relevant_data_future[
+                np.isin(relevant_data_future[:, 2], future_feature_idxs)
+            ]
+            # Overwrite the feature_idx column to be 0, 1, ..., len(future_feature_idxs) - 1
+            relevant_data_future[:, 2] = np.searchsorted(
+                future_feature_idxs, relevant_data_future[:, 2]
+            )
+
+        if relevant_data_future.shape[0] > 0:
+            node_idx, time_idx, feature_idx, values = (
+                relevant_data_future[:, 0].astype(int),
+                relevant_data_future[:, 1].astype(int) - target_start_time,
+                # Add offset to feature index (each file has its own feature set
+                # so we need to offset them to avoid collisions)
+                relevant_data_future[:, 2].astype(int) + feature_offset_future,
+                relevant_data_future[:, 3],
+            )
+            del relevant_data_future
+            # Populate the dense tensor for the window
+            x_dynamic_future[node_idx, time_idx, feature_idx] = torch.from_numpy(
+                values
+            ).float()
+
+        return x_dynamic_future
+
     def __getitem__(self, idx):
         """
         Returns a single sample, which may be a subset of nodes for a specific
         time window if node_batch_size is set.
         """
         time_idx, node_indices = self._get_time_and_node_indices(idx)
+        # Past relevant time indices
         input_start_time = time_idx
         input_end_time = input_start_time + self.in_timesteps - 1
+        # Future relevant time indices
+        target_start_time = input_end_time
+        target_end_time = target_start_time + self.out_timesteps - 1
 
         # Initialize a dense tensor for the dynamic features of this window
-        x_dynamic = torch.zeros(
+        x_dynamic_past = torch.zeros(
             (self.num_nodes, self.in_timesteps, self.num_dynamic_features)
         )
+        # The same for the dynamic future features
+        x_dynamic_future = torch.zeros(
+            (self.num_nodes, self.out_timesteps, self.num_dynamic_future_features)
+        )
 
-        feature_offset = 0
+        feature_offset_past, feature_offset_future = 0, 0
         for i, file_path in enumerate(self.dynamic_data_paths):
-            print(f"Loading dynamic features from {file_path}...")
+            # print(f"Loading dynamic features from {file_path}...")
             # Get the number of features for the current file
             num_features_in_file = self.dynamic_feature_dims[i]
             if num_features_in_file == 0:
                 continue
 
-            with h5py.File(file_path, "r") as f:
-                start_index = self.dynamic_data_indices[file_path][input_start_time, 0]
-                end_index = self.dynamic_data_indices[file_path][input_end_time, 1]
-                relevant_data = f["data"][start_index:end_index]  # type: ignore
-                assert isinstance(relevant_data, np.ndarray)
-
-            print("Found", relevant_data.shape[0], "relevant entries.\n")
-
-            if relevant_data.shape[0] > 0:
-                node_idx, time_idx, feature_idx, values = (
-                    relevant_data[:, 0].astype(int),
-                    relevant_data[:, 1].astype(int) - input_start_time,
-                    # Add offset to feature index (each file has its own feature set
-                    # so we need to offset them to avoid collisions)
-                    relevant_data[:, 2].astype(int) + feature_offset,
-                    relevant_data[:, 3],
-                )
-                del relevant_data  # Free memory
-                # Populate the dense tensor for the window
-                x_dynamic[node_idx, time_idx, feature_idx] = torch.from_numpy(
-                    values
-                ).float()
+            x_dynamic_past = self._get_dynamic_past_features(
+                x_dynamic_past,
+                file_path,
+                input_start_time,
+                input_end_time,
+                feature_offset_past,
+            )
             # Update the feature offset for the next file
-            feature_offset += num_features_in_file
+            feature_offset_past += num_features_in_file
 
-        # Now we load the target variable
-        target_start_time = input_end_time
-        target_end_time = target_start_time + self.out_timesteps - 1
+            num_future_features_in_file = len(
+                self.future_features_idxs.get(file_path, [])
+            )
+            if num_future_features_in_file == 0:
+                continue
+
+            x_dynamic_future = self._get_dynamic_future_features(
+                x_dynamic_future,
+                file_path,
+                target_start_time,
+                target_end_time,
+                feature_offset_future,
+            )
+            # Update the feature offset for the next file
+            feature_offset_future += num_future_features_in_file
 
         y = torch.zeros((self.num_nodes, self.out_timesteps))
 
@@ -257,7 +365,7 @@ class TrafficDataset(Dataset):
             target_relevant_data = f["data"][start_index:end_index]  # type: ignore
             assert isinstance(target_relevant_data, np.ndarray)
 
-        print("Found", target_relevant_data.shape[0], "relevant target entries.\n")
+        # print("Found", target_relevant_data.shape[0], "relevant target entries.\n")
 
         if target_relevant_data.shape[0] > 0:
             node_idx, time_idx, values = (
@@ -268,19 +376,19 @@ class TrafficDataset(Dataset):
             )
             y[node_idx, time_idx] = torch.from_numpy(values).float()
 
-        print(
-            "Dynamic features loaded for time window:",
-            input_start_time,
-            "to",
-            input_end_time,
-        )
-        print(
-            "Target variable loaded for time window:",
-            target_start_time,
-            "to",
-            target_end_time,
-        )
-        print("-" * 40)
+        # print(
+        #     "Dynamic features loaded for time window:",
+        #     input_start_time,
+        #     "to",
+        #     input_end_time,
+        # )
+        # print(
+        #     "Target variable loaded for time window:",
+        #     target_start_time,
+        #     "to",
+        #     target_end_time,
+        # )
+        # print("-" * 40)
         if self.node_batch_size is not None:
             # Use torch_geometric's subgraph utility to get the edges for the
             # node subset and automatically relabel the node indices from 0
@@ -292,7 +400,8 @@ class TrafficDataset(Dataset):
             )
             return Data(
                 x_static=self.static_features[node_indices],
-                x_dynamic=x_dynamic[node_indices],
+                x_dynamic_past=x_dynamic_past[node_indices],
+                x_dynamic_future=x_dynamic_future[node_indices],
                 y=y[node_indices],
                 edge_index=edge_index_sub,
                 num_nodes=self.num_nodes,
@@ -300,7 +409,8 @@ class TrafficDataset(Dataset):
         else:
             return Data(
                 x_static=self.static_features,
-                x_dynamic=x_dynamic,
+                x_dynamic_past=x_dynamic_past,
+                x_dynamic_future=x_dynamic_future,
                 y=y,
                 edge_index=self.edge_index,
                 num_nodes=self.num_nodes,
