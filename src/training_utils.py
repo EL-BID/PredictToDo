@@ -1,7 +1,12 @@
 import torch
 import pandas as pd
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+import random
+import re
+from collections import deque
+from typing import Optional, Callable, Literal, Any
 
 def pad_collate(batch):
     assert len(batch) > 0, "Empty batch."
@@ -61,27 +66,106 @@ class Node50Picker:
     rng: np.random.Generator
 
     def pick(self):
-        # If one group is empty, fall back to the other
         if len(self.top_nodes) == 0:
             return self.rng.choice(self.other_nodes)
         if len(self.other_nodes) == 0:
             return self.rng.choice(self.top_nodes)
-        # 50% from top-20%, 50% from the rest (uniform within each group)
         return (self.rng.choice(self.top_nodes)
                 if self.rng.random() < 0.5
                 else self.rng.choice(self.other_nodes))
 
 def build_node_50_picker(csv_path: str, top_frac: float = 0.2, seed: int = 0) -> Node50Picker:
-    df = pd.read_csv(csv_path)  # assumes: col0=node, col1=hours
+    df = pd.read_csv(csv_path)  # assumes: col0=node (literal), col1=hours
     df = df.iloc[:, :2].copy()
     df.columns = ["node", "hours"]
     df["hours"] = pd.to_numeric(df["hours"], errors="coerce").fillna(0)
 
-    d = df.sort_values("hours", ascending=False).reset_index(drop=True)
+    # keep nodes exactly as strings to preserve literals like "11013660_B.1"
+    d = df.sort_values("hours", ascending=False, ignore_index=True)
     cutoff = max(1, int(np.ceil(len(d) * top_frac)))
-    top_nodes   = d["node"].iloc[:cutoff].to_numpy()
-    other_nodes = d["node"].iloc[cutoff:].to_numpy()
+    top_nodes   = d["node"].astype(str).to_numpy()
+    other_nodes = d["node"].astype(str).to_numpy()[cutoff:]
 
-    return Node50Picker(top_nodes=top_nodes,
-                        other_nodes=other_nodes,
-                        rng=np.random.default_rng(seed))
+    return Node50Picker(
+        top_nodes=top_nodes,
+        other_nodes=other_nodes,
+        rng=np.random.default_rng(seed),
+    )
+
+def _default_node_key(seed_str: str) -> int:
+    """
+    Extracts a node id from a seed like '50008544_TF.1' -> 50008544.
+    If no '_' present, tries to parse the whole string as an int.
+    """
+    m = re.match(r"^(\d+)", str(seed_str))
+    if not m:
+        raise ValueError(f"Cannot parse node id from seed '{seed_str}'")
+    return int(m.group(1))
+
+# --- epoch-unique wrapper ----------------------------------------------------
+@dataclass
+class EpochUniquePicker:
+    base: Node50Picker
+    p_top: float = 0.5
+    on_exhaust: Literal["reset", "allow_repeat"] = "allow_repeat"
+    key_fn: Optional[Callable[[Any], Any]] = None  # map literal -> uniqueness key
+
+    _rng: np.random.Generator = field(init=False, repr=False)
+    _seen: set = field(default_factory=set, init=False, repr=False)
+    _top_perm: np.ndarray = field(default=None, init=False, repr=False)
+    _rest_perm: np.ndarray = field(default=None, init=False, repr=False)
+    _i_top: int = field(default=0, init=False, repr=False)
+    _i_rest: int = field(default=0, init=False, repr=False)
+
+    def __post_init__(self):
+        self._rng = self.base.rng
+        if self.key_fn is None:
+            # default: uniqueness by the full literal
+            self.key_fn = lambda x: x
+
+    def start_epoch(self):
+        self._seen.clear()
+        self._top_perm  = self._rng.permutation(self.base.top_nodes)
+        self._rest_perm = self._rng.permutation(self.base.other_nodes)
+        self._i_top = 0
+        self._i_rest = 0
+
+    def _draw_from(self, which: str):
+        if which == "top":
+            if self._i_top < len(self._top_perm):
+                v = self._top_perm[self._i_top]; self._i_top += 1; return v
+        else:
+            if self._i_rest < len(self._rest_perm):
+                v = self._rest_perm[self._i_rest]; self._i_rest += 1; return v
+        return None
+
+    def pick(self):
+        prefer_top = (self._rng.random() < self.p_top)
+        node = self._draw_from("top" if prefer_top else "rest")
+        if node is None:
+            node = self._draw_from("rest" if prefer_top else "top")
+
+        if node is None:
+            if self.on_exhaust == "reset":
+                self.start_epoch()
+                return self.pick()
+            # fallback: allow repeats using base picker (with replacement)
+            return self.base.pick()
+
+        key = self.key_fn(node)
+        if key in self._seen:
+            # try the other pool once
+            alt = self._draw_from("rest" if prefer_top else "top")
+            if alt is None:
+                if self.on_exhaust == "reset":
+                    self.start_epoch()
+                    return self.pick()
+                return self.base.pick()
+            node = alt
+            key = self.key_fn(node)
+
+        self._seen.add(key)
+        return node  # <-- return the literal as-is
+
+    def remaining(self):
+        return (len(self._top_perm) - self._i_top, len(self._rest_perm) - self._i_rest)
