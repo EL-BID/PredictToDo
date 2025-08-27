@@ -30,8 +30,8 @@ import matplotlib.pyplot as plt
 # %autoreload 2
 
 # %%
-processed_data_dir = "data/datos_procesados"
-roads_filename = "data/2_Estructura_via/estructura_via_completa/MVI.geojson"
+processed_data_dir = "../data/datos_procesados"
+roads_filename = "../data/2_Estructura_via/estructura_via_completa/MVI.geojson"
 
 irregularities_files = [
     f"{processed_data_dir}/irregularidades_procesadas/" + f
