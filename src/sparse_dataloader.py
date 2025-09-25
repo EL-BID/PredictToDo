@@ -28,7 +28,7 @@ class TrafficDataset(Dataset):
         in_timesteps: int,
         out_timesteps: int,
         future_features: list[str],
-        batch_n_neighbors: int = 500,
+        node_batch_size: int = 500,
         node_seed: str = "0_FT.5",
     ):
         """
@@ -40,7 +40,7 @@ class TrafficDataset(Dataset):
             in_timesteps (int): Number of time steps in the input sequence.
             out_timesteps (int): Number of time steps in the output sequence.
             future_features (list of str): List of dynamic feature names available in the future.
-            batch_n_neighbors (int): Number of reachable neighboring nodes to include in each batch.
+            node_batch_size (int): Number of reachable neighboring nodes to include in each batch.
             node_seed (str): The node ID to use as the seed for the first batch.
         """
         super().__init__()
@@ -53,7 +53,7 @@ class TrafficDataset(Dataset):
         self.total_timesteps_window = in_timesteps + out_timesteps
         self.dynamic_data_paths = dynamic_data_paths
         self.target_data_path = target_data_path
-        self.batch_n_neighbors = batch_n_neighbors
+        self.node_batch_size = node_batch_size
         self.future_features = future_features
 
         # Load static data and graph
@@ -64,6 +64,7 @@ class TrafficDataset(Dataset):
         self.batch_mapping = self.get_first_n_reachable()
         self.static_features = self._load_static_features(static_data_path)
         self.num_nodes = self.static_features.shape[0]
+        self.num_node_batches = math.ceil(self.num_nodes / self.node_batch_size)
         self.num_static_features = self.static_features.shape[1]
 
         # Open dynamic data files and get metadata
@@ -137,7 +138,7 @@ class TrafficDataset(Dataset):
             # to iterate over it directly and break when we have enough neighbors
             for _, v in bfs_edges_generator:
                 reachable.append(v)
-                if len(reachable) >= self.batch_n_neighbors:
+                if len(reachable) >= self.node_batch_size:
                     break
             all_reachable_nodes[start_node] = reachable
 
@@ -242,10 +243,10 @@ class TrafficDataset(Dataset):
             self.total_timesteps_in_data - self.total_timesteps_window + 1
         )
         # Each node has its own batch when chosen as seed
-        return num_time_windows * self.num_nodes
+        return num_time_windows * self.num_node_batches
 
     def _get_time_and_node_indices(self, idx) -> tuple[int, list[int]]:
-        time_idx = idx // self.num_nodes
+        time_idx = idx // self.num_node_batches
         neighbors = self.batch_mapping.get(self.node_seed, [])
         return time_idx, [self.node_to_id[n] for n in neighbors]
 
