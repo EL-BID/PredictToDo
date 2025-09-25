@@ -421,3 +421,86 @@ class TrafficDataset(Dataset):
             edge_index=edge_index_sub,
             num_nodes=self.num_nodes,
         )
+
+
+if __name__ == "__main__":
+    from torch_geometric.loader import DataLoader
+
+    from training_utils import pad_collate
+
+    # Example usage
+    processed_data_dir = "data/datos_procesados"
+    sparse_data_dir = f"{processed_data_dir}/sparse_datasets"
+    graph_filename = f"{processed_data_dir}/conectivity_graph/road_graph.pickle"
+    static_data_filename = f"{sparse_data_dir}/static_dataset.h5"
+    dynamic_data_filenames = [
+        f"{sparse_data_dir}/coi_points_dataset.h5",
+        f"{sparse_data_dir}/coi_tracts_dataset.h5",
+        f"{sparse_data_dir}/irregularities_dataset.h5",
+        f"{sparse_data_dir}/events_dataset.h5",
+        f"{sparse_data_dir}/incidents_dataset.h5",
+    ]
+    metadata_filenames = [
+        f"{sparse_data_dir}/coi_points_dataset_metadata.pkl",
+        f"{sparse_data_dir}/coi_tracts_dataset_metadata.pkl",
+        f"{sparse_data_dir}/irregularities_dataset_metadata.pkl",
+        f"{sparse_data_dir}/events_dataset_metadata.pkl",
+        f"{sparse_data_dir}/incidents_dataset_metadata.pkl",
+    ]
+    target_data_filename = f"{sparse_data_dir}/jams_dataset.h5"
+    in_timesteps = 6
+    out_timesteps = 3
+
+    traffic_dataset = TrafficDataset(
+        graph_path=graph_filename,
+        static_data_path=static_data_filename,
+        dynamic_data_paths=dynamic_data_filenames,
+        metadata_paths=metadata_filenames,
+        target_data_path=target_data_filename,
+        in_timesteps=in_timesteps,
+        out_timesteps=out_timesteps,
+        future_features=[
+            "coi_puntos",
+            "coi_tramo",
+            "AGLOMERACION",
+            "EMERGENCIA",
+            "MANIFESTACION",
+        ],
+        node_batch_size=100,
+    )
+
+    batch_size = 16
+    traffic_dataloader = DataLoader(
+        traffic_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+        collate_fn=pad_collate,
+    )
+
+    print(f"\nDataset size: {len(traffic_dataset)} samples")
+    print(f"Number of batches: {len(traffic_dataloader)}")
+    print("-" * 40)
+    print("-" * 40)
+    # Get a single batch
+    sample_batch = next(iter(traffic_dataloader))
+
+    # Inspect the batch
+    print(f"Edge index shape (batch_size, 2, num_edges):")
+    print(f"{sample_batch['edge_index'].shape}")
+    print()
+    print(f"Static features shape (batch_size, num_nodes, num_static_features):")
+    print(f"{sample_batch['x_static'].shape}")
+    print()
+    print(
+        f"Past dynamic features shape (batch_size, num_nodes, in_timesteps, num_dynamic_features):"
+    )
+    print(f"{sample_batch['x_dynamic_past'].shape}")
+    print()
+    print(
+        f"Future dynamic features shape (batch_size, num_nodes, out_timesteps, num_dynamic_features):"
+    )
+    print(f"{sample_batch['x_dynamic_future'].shape}")
+    print()
+    print(f"Target shape (batch_size, num_nodes, out_timesteps):")
+    print(f"{sample_batch['y'].shape}")
