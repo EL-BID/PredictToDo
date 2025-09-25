@@ -45,9 +45,6 @@ class TrafficDataset(Dataset):
         """
         super().__init__()
         self.node_seed = node_seed
-        self._cached_seed = None
-        self._cached_nodes = None
-        self._cached_edge_index_sub = None
         self.in_timesteps = in_timesteps
         self.out_timesteps = out_timesteps
         self.total_timesteps_window = in_timesteps + out_timesteps
