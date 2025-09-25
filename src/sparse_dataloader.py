@@ -528,7 +528,7 @@ if __name__ == "__main__":
         traffic_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=0,
         collate_fn=pad_collate,
         persistent_workers=True,  # Keep workers alive between epochs
     )
