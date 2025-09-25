@@ -56,7 +56,9 @@ class TrafficDataset(Dataset):
 
         # Load static data and graph
         # These are assumed to be small enough to fit in memory
-        self.R, self.edge_index, self.node_to_id, self.id_to_node = self._load_graph(graph_path)
+        self.graph, self.edge_index, self.node_to_id, self.id_to_node = (
+            self._load_graph(graph_path)
+        )
         self.static_features = self._load_static_features(static_data_path)
         self.num_nodes = self.static_features.shape[0]
         self.num_static_features = self.static_features.shape[1]
@@ -132,12 +134,10 @@ class TrafficDataset(Dataset):
     def reasign_seed(self, node_seed):
         if node_seed != self.node_seed:
             self.node_seed = node_seed
-            # invalidate caches
-            self._cached_seed = None
-            self._cached_nodes = None
-            self._cached_edge_index_sub = None
 
-    def _load_graph(self, graph_path):
+    def _load_graph(
+        self, graph_path
+    ) -> tuple[nx.Graph, torch.Tensor, dict[str, int], dict[int, str]]:
         """Loads the graph from a pickle file."""
         with open(graph_path, "rb") as f:
             nx_graph = pickle.load(f)
@@ -312,7 +312,7 @@ class TrafficDataset(Dataset):
 
         return x_dynamic_future
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> Data:
         """
         Returns a single sample, which may be a subset of nodes for a specific
         time window if node_batch_size is set.
@@ -391,43 +391,19 @@ class TrafficDataset(Dataset):
             )
             y[node_idx, time_idx] = torch.from_numpy(values).float()
 
-        # print(
-        #     "Dynamic features loaded for time window:",
-        #     input_start_time,
-        #     "to",
-        #     input_end_time,
-        # )
-        # print(
-        #     "Target variable loaded for time window:",
-        #     target_start_time,
-        #     "to",
-        #     target_end_time,
-        # )
-        # print("-" * 40)
-        if self.node_batch_size is not None:
-            # Use torch_geometric's subgraph utility to get the edges for the
-            # node subset and automatically relabel the node indices from 0
-            edge_index_sub, _ = subgraph(
-                subset=node_indices,
-                edge_index=self.edge_index,
-                relabel_nodes=True,
-                num_nodes=self.num_nodes,
-            )
-            return Data(
-                x_static=self.static_features[node_indices],
-                x_dynamic_past=x_dynamic_past[node_indices],
-                x_dynamic_future=x_dynamic_future[node_indices],
-                y=y[node_indices],
-                edge_index=edge_index_sub,
-                num_nodes=self.num_nodes,
-            )
-        else:
-            return Data(
-                x_static=self.static_features,
-                x_dynamic_past=x_dynamic_past,
-                x_dynamic_future=x_dynamic_future,
-                y=y,
-                edge_index=self.edge_index,
-                num_nodes=self.num_nodes,
-            )
-
+        # Use torch_geometric's subgraph utility to get the edges for the
+        # node subset and automatically relabel the node indices from 0
+        edge_index_sub, _ = subgraph(
+            subset=node_indices,
+            edge_index=self.edge_index,
+            relabel_nodes=True,
+            num_nodes=self.num_nodes,
+        )
+        return Data(
+            x_static=self.static_features[node_indices],
+            x_dynamic_past=x_dynamic_past[node_indices],
+            x_dynamic_future=x_dynamic_future[node_indices],
+            y=y[node_indices],
+            edge_index=edge_index_sub,
+            num_nodes=self.num_nodes,
+        )
