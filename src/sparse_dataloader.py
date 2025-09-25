@@ -108,14 +108,6 @@ class TrafficDataset(Dataset):
             metadata_paths
         )
 
-        # print(f"Dataset initialized.")
-        # print(f"Number of nodes: {self.num_nodes}")
-        # print(f"Node batch size: {self.node_batch_size or 'All nodes'}")
-        # print(f"Number of node batches: {self.num_node_batches}")
-        # print(f"Static features per node: {self.num_static_features}")
-        # print(f"Dynamic features per node: {self.num_dynamic_features}")
-        # print(f"Total time steps in data: {self.total_timesteps_in_data}")
-
     def _get_future_dynamic_feature_idxs(
         self, metadata_paths: list[str]
     ) -> dict[str, list[int]]:
@@ -437,5 +429,4 @@ class TrafficDataset(Dataset):
                 edge_index=self.edge_index,
                 num_nodes=self.num_nodes,
             )
-
 
