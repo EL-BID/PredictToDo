@@ -1,7 +1,8 @@
 import math
 import pickle
-import networkx as nx
+
 import h5py
+import networkx as nx
 import numpy as np
 import torch
 from scipy.sparse import coo_matrix
