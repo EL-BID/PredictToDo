@@ -28,8 +28,8 @@ class TrafficDataset(Dataset):
         in_timesteps: int,
         out_timesteps: int,
         future_features: list[str],
-        node_batch_size: int | None = None,
-        node_seed: str = "0_FT.5"
+        batch_n_neighbors: int = 500,
+        node_seed: str = "0_FT.5",
     ):
         """
         Args:
@@ -39,7 +39,9 @@ class TrafficDataset(Dataset):
             target_data_path (str): Path to the HDF5 file with target variable.
             in_timesteps (int): Number of time steps in the input sequence.
             out_timesteps (int): Number of time steps in the output sequence.
-            node_batch_size (int | None, optional): The number of nodes per batch. If None, each sample will contain all nodes.
+            future_features (list of str): List of dynamic feature names available in the future.
+            batch_n_neighbors (int): Number of reachable neighboring nodes to include in each batch.
+            node_seed (str): The node ID to use as the seed for the first batch.
         """
         super().__init__()
         self.node_seed = node_seed
@@ -51,7 +53,7 @@ class TrafficDataset(Dataset):
         self.total_timesteps_window = in_timesteps + out_timesteps
         self.dynamic_data_paths = dynamic_data_paths
         self.target_data_path = target_data_path
-        self.node_batch_size = node_batch_size
+        self.batch_n_neighbors = batch_n_neighbors
         self.future_features = future_features
 
         # Load static data and graph
@@ -59,15 +61,10 @@ class TrafficDataset(Dataset):
         self.graph, self.edge_index, self.node_to_id, self.id_to_node = (
             self._load_graph(graph_path)
         )
+        self.batch_mapping = self.get_first_n_reachable()
         self.static_features = self._load_static_features(static_data_path)
         self.num_nodes = self.static_features.shape[0]
         self.num_static_features = self.static_features.shape[1]
-
-        self.num_node_batches = 1
-        if self.node_batch_size is not None:
-            if self.node_batch_size <= 0:
-                raise ValueError("node_batch_size must be a positive integer.")
-            self.num_node_batches = math.ceil(self.num_nodes / self.node_batch_size)
 
         # Open dynamic data files and get metadata
         self.total_timesteps_in_data = 0
@@ -181,7 +178,6 @@ class TrafficDataset(Dataset):
         id_to_node = {i: node for i, node in enumerate(nx_graph.nodes())}
         return nx_graph, from_networkx(nx_graph).edge_index, node_to_id, id_to_node
 
-
     def _load_static_features(self, file_path):
         """Loads static features from HDF5 and returns a dense tensor."""
         with h5py.File(file_path, "r") as f:
@@ -245,31 +241,13 @@ class TrafficDataset(Dataset):
         num_time_windows = (
             self.total_timesteps_in_data - self.total_timesteps_window + 1
         )
-        return num_time_windows * self.num_node_batches
+        # Each node has its own batch when chosen as seed
+        return num_time_windows * self.num_nodes
 
-    def get_roads_within_hops(self, k=15):
-        # returns dict {road: distance_in_hops}
-        dists = nx.single_source_shortest_path_length(self.R, self.node_seed, cutoff=k)
-        return dists
-
-    def _compute_subset_for_seed(self):
-        roads = list(self.get_roads_within_hops().keys())
-        node_indices = torch.tensor(sorted(self.node_to_id[r] for r in roads), dtype=torch.long)
-        edge_index_sub, _ = subgraph(
-            subset=node_indices, edge_index=self.edge_index,
-            relabel_nodes=True, num_nodes=self.num_nodes
-        )
-        self._cached_seed = self.node_seed
-        self._cached_nodes = node_indices
-        self._cached_edge_index_sub = edge_index_sub
-
-    def _get_time_and_node_indices(self, idx):
-        if self.node_batch_size is None:
-            return idx, torch.arange(self.num_nodes)
-        time_idx = idx // self.num_node_batches
-        if self._cached_seed != self.node_seed or self._cached_nodes is None:
-            self._compute_subset_for_seed()
-        return time_idx, self._cached_nodes
+    def _get_time_and_node_indices(self, idx) -> tuple[int, list[int]]:
+        time_idx = idx // self.num_nodes
+        neighbors = self.batch_mapping.get(self.node_seed, [])
+        return time_idx, [self.node_to_id[n] for n in neighbors]
 
     def _get_dynamic_past_features(
         self,
