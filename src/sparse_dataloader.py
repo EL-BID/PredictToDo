@@ -1,6 +1,6 @@
 import math
 import pickle
-
+import networkx as nx
 import h5py
 import numpy as np
 import torch
@@ -28,6 +28,7 @@ class TrafficDataset(Dataset):
         out_timesteps: int,
         future_features: list[str],
         node_batch_size: int | None = None,
+        node_seed: str = "0_FT.5"
     ):
         """
         Args:
@@ -40,6 +41,10 @@ class TrafficDataset(Dataset):
             node_batch_size (int | None, optional): The number of nodes per batch. If None, each sample will contain all nodes.
         """
         super().__init__()
+        self.node_seed = node_seed
+        self._cached_seed = None
+        self._cached_nodes = None
+        self._cached_edge_index_sub = None
         self.in_timesteps = in_timesteps
         self.out_timesteps = out_timesteps
         self.total_timesteps_window = in_timesteps + out_timesteps
@@ -50,7 +55,7 @@ class TrafficDataset(Dataset):
 
         # Load static data and graph
         # These are assumed to be small enough to fit in memory
-        self.edge_index = self._load_graph(graph_path)
+        self.R, self.edge_index, self.node_to_id, self.id_to_node = self._load_graph(graph_path)
         self.static_features = self._load_static_features(static_data_path)
         self.num_nodes = self.static_features.shape[0]
         self.num_static_features = self.static_features.shape[1]
@@ -103,14 +108,6 @@ class TrafficDataset(Dataset):
             metadata_paths
         )
 
-        # print(f"Dataset initialized.")
-        # print(f"Number of nodes: {self.num_nodes}")
-        # print(f"Node batch size: {self.node_batch_size or 'All nodes'}")
-        # print(f"Number of node batches: {self.num_node_batches}")
-        # print(f"Static features per node: {self.num_static_features}")
-        # print(f"Dynamic features per node: {self.num_dynamic_features}")
-        # print(f"Total time steps in data: {self.total_timesteps_in_data}")
-
     def _get_future_dynamic_feature_idxs(
         self, metadata_paths: list[str]
     ) -> dict[str, list[int]]:
@@ -131,11 +128,23 @@ class TrafficDataset(Dataset):
                 future_features_idxs.update({dataset_file: feature_idxs})
         return future_features_idxs
 
+    def reasign_seed(self, node_seed):
+        if node_seed != self.node_seed:
+            self.node_seed = node_seed
+            # invalidate caches
+            self._cached_seed = None
+            self._cached_nodes = None
+            self._cached_edge_index_sub = None
+
     def _load_graph(self, graph_path):
         """Loads the graph from a pickle file."""
         with open(graph_path, "rb") as f:
             nx_graph = pickle.load(f)
-        return from_networkx(nx_graph).edge_index
+
+        node_to_id = {node: i for i, node in enumerate(nx_graph.nodes())}
+        id_to_node = {i: node for i, node in enumerate(nx_graph.nodes())}
+        return nx_graph, from_networkx(nx_graph).edge_index, node_to_id, id_to_node
+
 
     def _load_static_features(self, file_path):
         """Loads static features from HDF5 and returns a dense tensor."""
@@ -202,24 +211,29 @@ class TrafficDataset(Dataset):
         )
         return num_time_windows * self.num_node_batches
 
-    def _get_time_and_node_indices(self, idx) -> tuple[int, torch.Tensor]:
-        """
-        Calculates the time window index and the tensor of node indices
-        for a given flat dataset index.
-        """
-        # If not batching by nodes, idx is just the time index and we use all nodes
+    def get_roads_within_hops(self, k=15):
+        # returns dict {road: distance_in_hops}
+        dists = nx.single_source_shortest_path_length(self.R, self.node_seed, cutoff=k)
+        return dists
+
+    def _compute_subset_for_seed(self):
+        roads = list(self.get_roads_within_hops().keys())
+        node_indices = torch.tensor(sorted(self.node_to_id[r] for r in roads), dtype=torch.long)
+        edge_index_sub, _ = subgraph(
+            subset=node_indices, edge_index=self.edge_index,
+            relabel_nodes=True, num_nodes=self.num_nodes
+        )
+        self._cached_seed = self.node_seed
+        self._cached_nodes = node_indices
+        self._cached_edge_index_sub = edge_index_sub
+
+    def _get_time_and_node_indices(self, idx):
         if self.node_batch_size is None:
             return idx, torch.arange(self.num_nodes)
-
-        # If batching by nodes, decode the flat index `idx`
         time_idx = idx // self.num_node_batches
-        node_batch_idx = idx % self.num_node_batches
-
-        start_node = node_batch_idx * self.node_batch_size
-        end_node = min((node_batch_idx + 1) * self.node_batch_size, self.num_nodes)
-        node_indices = torch.arange(start_node, end_node)
-
-        return time_idx, node_indices
+        if self._cached_seed != self.node_seed or self._cached_nodes is None:
+            self._compute_subset_for_seed()
+        return time_idx, self._cached_nodes
 
     def _get_dynamic_past_features(
         self,
@@ -415,3 +429,4 @@ class TrafficDataset(Dataset):
                 edge_index=self.edge_index,
                 num_nodes=self.num_nodes,
             )
+
