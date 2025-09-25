@@ -254,6 +254,7 @@ class TrafficDataset(Dataset):
         input_start_time: int,
         input_end_time: int,
         feature_offset_past: int,
+        node_idx_to_batch_idx: dict[int, int],
     ) -> torch.Tensor:
         with h5py.File(file_path, "r") as f:
             # We first fetch the relevant data for the past
@@ -274,10 +275,24 @@ class TrafficDataset(Dataset):
                 relevant_data_past[:, 3],
             )
             del relevant_data_past  # Free memory
-            # Populate the dense tensor for the window
-            x_dynamic_past[node_idx, time_idx, feature_idx] = torch.from_numpy(
-                values
-            ).float()
+
+            # Only populate features for nodes in the current batch
+            batch_mask = np.isin(node_idx, list(node_idx_to_batch_idx.keys()))
+            if batch_mask.sum() > 0:
+                batch_node_idx = node_idx[batch_mask]
+                batch_time_idx = time_idx[batch_mask]
+                batch_feature_idx = feature_idx[batch_mask]
+                batch_values = values[batch_mask]
+
+                # Convert global node indices to batch indices
+                batch_node_indices = [
+                    node_idx_to_batch_idx[idx] for idx in batch_node_idx
+                ]
+
+                # Populate the dense tensor for the window
+                x_dynamic_past[
+                    batch_node_indices, batch_time_idx, batch_feature_idx
+                ] = torch.from_numpy(batch_values).float()
 
         return x_dynamic_past
 
@@ -288,6 +303,7 @@ class TrafficDataset(Dataset):
         target_start_time: int,
         target_end_time: int,
         feature_offset_future: int,
+        node_idx_to_batch_idx: dict[int, int],
     ) -> torch.Tensor:
         with h5py.File(file_path, "r") as f:
             # Now the same but for the future
@@ -316,10 +332,24 @@ class TrafficDataset(Dataset):
                 relevant_data_future[:, 3],
             )
             del relevant_data_future
-            # Populate the dense tensor for the window
-            x_dynamic_future[node_idx, time_idx, feature_idx] = torch.from_numpy(
-                values
-            ).float()
+
+            # Only populate features for nodes in the current batch
+            batch_mask = np.isin(node_idx, list(node_idx_to_batch_idx.keys()))
+            if batch_mask.sum() > 0:
+                batch_node_idx = node_idx[batch_mask]
+                batch_time_idx = time_idx[batch_mask]
+                batch_feature_idx = feature_idx[batch_mask]
+                batch_values = values[batch_mask]
+
+                # Convert global node indices to batch indices
+                batch_node_indices = [
+                    node_idx_to_batch_idx[idx] for idx in batch_node_idx
+                ]
+
+                # Populate the dense tensor for the window
+                x_dynamic_future[
+                    batch_node_indices, batch_time_idx, batch_feature_idx
+                ] = torch.from_numpy(batch_values).float()
 
         return x_dynamic_future
 
@@ -337,12 +367,17 @@ class TrafficDataset(Dataset):
         target_end_time = target_start_time + self.out_timesteps - 1
 
         # Initialize a dense tensor for the dynamic features of this window
+        # Only allocate for the nodes we actually need (batch size, not all nodes)
+        batch_size = len(node_indices)
+        # Create a mapping from global node index to batch index
+        node_idx_to_batch_idx = {node_idx: i for i, node_idx in enumerate(node_indices)}
+
         x_dynamic_past = torch.zeros(
-            (self.num_nodes, self.in_timesteps, self.num_dynamic_features)
+            (batch_size, self.in_timesteps, self.num_dynamic_features)
         )
         # The same for the dynamic future features
         x_dynamic_future = torch.zeros(
-            (self.num_nodes, self.out_timesteps, self.num_dynamic_future_features)
+            (batch_size, self.out_timesteps, self.num_dynamic_future_features)
         )
 
         feature_offset_past, feature_offset_future = 0, 0
@@ -359,6 +394,7 @@ class TrafficDataset(Dataset):
                 input_start_time,
                 input_end_time,
                 feature_offset_past,
+                node_idx_to_batch_idx,
             )
             # Update the feature offset for the next file
             feature_offset_past += num_features_in_file
@@ -375,11 +411,12 @@ class TrafficDataset(Dataset):
                 target_start_time,
                 target_end_time,
                 feature_offset_future,
+                node_idx_to_batch_idx,
             )
             # Update the feature offset for the next file
             feature_offset_future += num_future_features_in_file
 
-        y = torch.zeros((self.num_nodes, self.out_timesteps))
+        y = torch.zeros((batch_size, self.out_timesteps))
 
         with h5py.File(self.target_data_path, "r") as f:
             start_index = self.target_data_indices[self.target_data_path][
@@ -400,7 +437,22 @@ class TrafficDataset(Dataset):
                 # target_relevant_data[:, 2].astype(int), # feature_idx is always 0
                 target_relevant_data[:, 3],
             )
-            y[node_idx, time_idx] = torch.from_numpy(values).float()
+
+            # Only populate targets for nodes in the current batch
+            batch_mask = np.isin(node_idx, list(node_idx_to_batch_idx.keys()))
+            if batch_mask.sum() > 0:
+                batch_node_idx = node_idx[batch_mask]
+                batch_time_idx = time_idx[batch_mask]
+                batch_values = values[batch_mask]
+
+                # Convert global node indices to batch indices
+                batch_node_indices = [
+                    node_idx_to_batch_idx[idx] for idx in batch_node_idx
+                ]
+
+                y[batch_node_indices, batch_time_idx] = torch.from_numpy(
+                    batch_values
+                ).float()
 
         # Use torch_geometric's subgraph utility to get the edges for the
         # node subset and automatically relabel the node indices from 0
@@ -412,15 +464,17 @@ class TrafficDataset(Dataset):
         )
         return Data(
             x_static=self.static_features[node_indices],
-            x_dynamic_past=x_dynamic_past[node_indices],
-            x_dynamic_future=x_dynamic_future[node_indices],
-            y=y[node_indices],
+            x_dynamic_past=x_dynamic_past,
+            x_dynamic_future=x_dynamic_future,
+            y=y,
             edge_index=edge_index_sub,
             num_nodes=self.num_nodes,
         )
 
 
 if __name__ == "__main__":
+    import time
+
     from torch_geometric.loader import DataLoader
 
     from training_utils import pad_collate
@@ -445,9 +499,10 @@ if __name__ == "__main__":
         f"{sparse_data_dir}/incidents_dataset_metadata.pkl",
     ]
     target_data_filename = f"{sparse_data_dir}/jams_dataset.h5"
-    in_timesteps = 6
-    out_timesteps = 3
+    in_timesteps = 150
+    out_timesteps = 50
 
+    print("Initializing dataset and dataloader...")
     traffic_dataset = TrafficDataset(
         graph_path=graph_filename,
         static_data_path=static_data_filename,
@@ -463,41 +518,34 @@ if __name__ == "__main__":
             "EMERGENCIA",
             "MANIFESTACION",
         ],
-        node_batch_size=100,
+        node_batch_size=500,
     )
+    print("Dataset initialized.")
+    print(f"Total samples in dataset: {len(traffic_dataset)}")
 
     batch_size = 16
     traffic_dataloader = DataLoader(
         traffic_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=4,
         collate_fn=pad_collate,
+        persistent_workers=True,  # Keep workers alive between epochs
     )
 
     print(f"\nDataset size: {len(traffic_dataset)} samples")
     print(f"Number of batches: {len(traffic_dataloader)}")
     print("-" * 40)
     print("-" * 40)
-    # Get a single batch
-    sample_batch = next(iter(traffic_dataloader))
 
-    # Inspect the batch
-    print(f"Edge index shape (batch_size, 2, num_edges):")
-    print(f"{sample_batch['edge_index'].shape}")
-    print()
-    print(f"Static features shape (batch_size, num_nodes, num_static_features):")
-    print(f"{sample_batch['x_static'].shape}")
-    print()
-    print(
-        f"Past dynamic features shape (batch_size, num_nodes, in_timesteps, num_dynamic_features):"
-    )
-    print(f"{sample_batch['x_dynamic_past'].shape}")
-    print()
-    print(
-        f"Future dynamic features shape (batch_size, num_nodes, out_timesteps, num_dynamic_features):"
-    )
-    print(f"{sample_batch['x_dynamic_future'].shape}")
-    print()
-    print(f"Target shape (batch_size, num_nodes, out_timesteps):")
-    print(f"{sample_batch['y'].shape}")
+    # Initialize prev_end before the loop
+    prev_end = time.perf_counter()
+
+    # Time the dataloader over multiple batches
+    for step, batch in enumerate(traffic_dataloader):
+        iter_start = time.perf_counter()
+        data_wait_s = iter_start - prev_end
+        print(f"Batch {step}: dataloader wait = {data_wait_s * 1000:.1f} ms")
+        prev_end = time.perf_counter()
+        if step >= 10:
+            break
