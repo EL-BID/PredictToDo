@@ -1,7 +1,8 @@
 import math
 import pickle
-import networkx as nx
+
 import h5py
+import networkx as nx
 import numpy as np
 import torch
 from scipy.sparse import coo_matrix
@@ -27,8 +28,8 @@ class TrafficDataset(Dataset):
         in_timesteps: int,
         out_timesteps: int,
         future_features: list[str],
-        node_batch_size: int | None = None,
-        node_seed: str = "0_FT.5"
+        batch_n_neighbors: int = 500,
+        node_seed: str = "0_FT.5",
     ):
         """
         Args:
@@ -38,7 +39,9 @@ class TrafficDataset(Dataset):
             target_data_path (str): Path to the HDF5 file with target variable.
             in_timesteps (int): Number of time steps in the input sequence.
             out_timesteps (int): Number of time steps in the output sequence.
-            node_batch_size (int | None, optional): The number of nodes per batch. If None, each sample will contain all nodes.
+            future_features (list of str): List of dynamic feature names available in the future.
+            batch_n_neighbors (int): Number of reachable neighboring nodes to include in each batch.
+            node_seed (str): The node ID to use as the seed for the first batch.
         """
         super().__init__()
         self.node_seed = node_seed
@@ -50,21 +53,18 @@ class TrafficDataset(Dataset):
         self.total_timesteps_window = in_timesteps + out_timesteps
         self.dynamic_data_paths = dynamic_data_paths
         self.target_data_path = target_data_path
-        self.node_batch_size = node_batch_size
+        self.batch_n_neighbors = batch_n_neighbors
         self.future_features = future_features
 
         # Load static data and graph
         # These are assumed to be small enough to fit in memory
-        self.R, self.edge_index, self.node_to_id, self.id_to_node = self._load_graph(graph_path)
+        self.graph, self.edge_index, self.node_to_id, self.id_to_node = (
+            self._load_graph(graph_path)
+        )
+        self.batch_mapping = self.get_first_n_reachable()
         self.static_features = self._load_static_features(static_data_path)
         self.num_nodes = self.static_features.shape[0]
         self.num_static_features = self.static_features.shape[1]
-
-        self.num_node_batches = 1
-        if self.node_batch_size is not None:
-            if self.node_batch_size <= 0:
-                raise ValueError("node_batch_size must be a positive integer.")
-            self.num_node_batches = math.ceil(self.num_nodes / self.node_batch_size)
 
         # Open dynamic data files and get metadata
         self.total_timesteps_in_data = 0
@@ -108,6 +108,41 @@ class TrafficDataset(Dataset):
             metadata_paths
         )
 
+    def get_first_n_reachable(self) -> dict[str, list[str]]:
+        """
+        For every node in a graph, finds the first N reachable neighboring nodes
+        ordered by the fewest number of jumps (BFS order).
+
+        This function is efficient for large graphs.
+
+        Args:
+            graph (nx.Graph): The input NetworkX graph.
+            n_neighbors (int): The number of reachable nodes to find for each node.
+
+        Returns:
+            dict: A dictionary where each key is a node ID and the value is a
+                list of the first n_neighbors reachable nodes.
+        """
+        # Initialize the dictionary to store the results
+        all_reachable_nodes = {}
+
+        # Iterate over every node in the graph to treat it as a starting point
+        for start_node in self.graph.nodes():
+            # nx.bfs_edges provides an efficient generator that yields edges
+            # in the order of a BFS
+            bfs_edges_generator = nx.bfs_edges(self.graph, source=start_node)
+
+            reachable = []
+            # Since bfs_edges_generator is a generator, it's much more efficient
+            # to iterate over it directly and break when we have enough neighbors
+            for _, v in bfs_edges_generator:
+                reachable.append(v)
+                if len(reachable) >= self.batch_n_neighbors:
+                    break
+            all_reachable_nodes[start_node] = reachable
+
+        return all_reachable_nodes
+
     def _get_future_dynamic_feature_idxs(
         self, metadata_paths: list[str]
     ) -> dict[str, list[int]]:
@@ -131,12 +166,10 @@ class TrafficDataset(Dataset):
     def reasign_seed(self, node_seed):
         if node_seed != self.node_seed:
             self.node_seed = node_seed
-            # invalidate caches
-            self._cached_seed = None
-            self._cached_nodes = None
-            self._cached_edge_index_sub = None
 
-    def _load_graph(self, graph_path):
+    def _load_graph(
+        self, graph_path
+    ) -> tuple[nx.Graph, torch.Tensor, dict[str, int], dict[int, str]]:
         """Loads the graph from a pickle file."""
         with open(graph_path, "rb") as f:
             nx_graph = pickle.load(f)
@@ -144,7 +177,6 @@ class TrafficDataset(Dataset):
         node_to_id = {node: i for i, node in enumerate(nx_graph.nodes())}
         id_to_node = {i: node for i, node in enumerate(nx_graph.nodes())}
         return nx_graph, from_networkx(nx_graph).edge_index, node_to_id, id_to_node
-
 
     def _load_static_features(self, file_path):
         """Loads static features from HDF5 and returns a dense tensor."""
@@ -209,31 +241,13 @@ class TrafficDataset(Dataset):
         num_time_windows = (
             self.total_timesteps_in_data - self.total_timesteps_window + 1
         )
-        return num_time_windows * self.num_node_batches
+        # Each node has its own batch when chosen as seed
+        return num_time_windows * self.num_nodes
 
-    def get_roads_within_hops(self, k=15):
-        # returns dict {road: distance_in_hops}
-        dists = nx.single_source_shortest_path_length(self.R, self.node_seed, cutoff=k)
-        return dists
-
-    def _compute_subset_for_seed(self):
-        roads = list(self.get_roads_within_hops().keys())
-        node_indices = torch.tensor(sorted(self.node_to_id[r] for r in roads), dtype=torch.long)
-        edge_index_sub, _ = subgraph(
-            subset=node_indices, edge_index=self.edge_index,
-            relabel_nodes=True, num_nodes=self.num_nodes
-        )
-        self._cached_seed = self.node_seed
-        self._cached_nodes = node_indices
-        self._cached_edge_index_sub = edge_index_sub
-
-    def _get_time_and_node_indices(self, idx):
-        if self.node_batch_size is None:
-            return idx, torch.arange(self.num_nodes)
-        time_idx = idx // self.num_node_batches
-        if self._cached_seed != self.node_seed or self._cached_nodes is None:
-            self._compute_subset_for_seed()
-        return time_idx, self._cached_nodes
+    def _get_time_and_node_indices(self, idx) -> tuple[int, list[int]]:
+        time_idx = idx // self.num_nodes
+        neighbors = self.batch_mapping.get(self.node_seed, [])
+        return time_idx, [self.node_to_id[n] for n in neighbors]
 
     def _get_dynamic_past_features(
         self,
@@ -311,7 +325,7 @@ class TrafficDataset(Dataset):
 
         return x_dynamic_future
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> Data:
         """
         Returns a single sample, which may be a subset of nodes for a specific
         time window if node_batch_size is set.
@@ -390,43 +404,19 @@ class TrafficDataset(Dataset):
             )
             y[node_idx, time_idx] = torch.from_numpy(values).float()
 
-        # print(
-        #     "Dynamic features loaded for time window:",
-        #     input_start_time,
-        #     "to",
-        #     input_end_time,
-        # )
-        # print(
-        #     "Target variable loaded for time window:",
-        #     target_start_time,
-        #     "to",
-        #     target_end_time,
-        # )
-        # print("-" * 40)
-        if self.node_batch_size is not None:
-            # Use torch_geometric's subgraph utility to get the edges for the
-            # node subset and automatically relabel the node indices from 0
-            edge_index_sub, _ = subgraph(
-                subset=node_indices,
-                edge_index=self.edge_index,
-                relabel_nodes=True,
-                num_nodes=self.num_nodes,
-            )
-            return Data(
-                x_static=self.static_features[node_indices],
-                x_dynamic_past=x_dynamic_past[node_indices],
-                x_dynamic_future=x_dynamic_future[node_indices],
-                y=y[node_indices],
-                edge_index=edge_index_sub,
-                num_nodes=self.num_nodes,
-            )
-        else:
-            return Data(
-                x_static=self.static_features,
-                x_dynamic_past=x_dynamic_past,
-                x_dynamic_future=x_dynamic_future,
-                y=y,
-                edge_index=self.edge_index,
-                num_nodes=self.num_nodes,
-            )
-
+        # Use torch_geometric's subgraph utility to get the edges for the
+        # node subset and automatically relabel the node indices from 0
+        edge_index_sub, _ = subgraph(
+            subset=node_indices,
+            edge_index=self.edge_index,
+            relabel_nodes=True,
+            num_nodes=self.num_nodes,
+        )
+        return Data(
+            x_static=self.static_features[node_indices],
+            x_dynamic_past=x_dynamic_past[node_indices],
+            x_dynamic_future=x_dynamic_future[node_indices],
+            y=y[node_indices],
+            edge_index=edge_index_sub,
+            num_nodes=self.num_nodes,
+        )
