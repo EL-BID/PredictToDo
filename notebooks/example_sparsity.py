@@ -38,6 +38,13 @@ dynamic_data_filenames = [
     f"{sparse_data_dir}/events_dataset.h5",
     f"{sparse_data_dir}/incidents_dataset.h5",
 ]
+metadata_filenames = [
+    f"{sparse_data_dir}/coi_points_dataset_metadata.pkl",
+    f"{sparse_data_dir}/coi_tracts_dataset_metadata.pkl",
+    f"{sparse_data_dir}/irregularities_dataset_metadata.pkl",
+    f"{sparse_data_dir}/events_dataset_metadata.pkl",
+    f"{sparse_data_dir}/incidents_dataset_metadata.pkl",
+]
 target_data_filename = f"{sparse_data_dir}/jams_dataset.h5"
 in_timesteps = 6
 out_timesteps = 3
@@ -46,20 +53,28 @@ traffic_dataset = TrafficDataset(
     graph_path=graph_filename,
     static_data_path=static_data_filename,
     dynamic_data_paths=dynamic_data_filenames,
+    metadata_paths=metadata_filenames,
     target_data_path=target_data_filename,
     in_timesteps=in_timesteps,
     out_timesteps=out_timesteps,
+    future_features=[
+        "coi_puntos",
+        "coi_tramo",
+        "AGLOMERACION",
+        "EMERGENCIA",
+        "MANIFESTACION",
+    ],
     node_batch_size=1024,
 )
 
 # %%
-batch_size = 2
+batch_size = 3
 
 traffic_dataloader = DataLoader(
     dataset=traffic_dataset,
-    batch_size=batch_size, # This now batches the Data objects
+    batch_size=batch_size,  # This now batches the Data objects
     shuffle=True,
-    num_workers=0 
+    num_workers=0,
 )
 
 # %%
@@ -77,8 +92,15 @@ print()
 print(f"Static features shape (batch_size, num_nodes, num_static_features):")
 print(f"{sample_batch['x_static'].shape}")
 print()
-print(f"Dynamic features shape (batch_size, num_nodes, in_timesteps, num_dynamic_features):")
-print(f"{sample_batch['x_dynamic'].shape}")
+print(
+    f"Past dynamic features shape (batch_size, num_nodes, in_timesteps, num_dynamic_features):"
+)
+print(f"{sample_batch['x_dynamic_past'].shape}")
+print()
+print(
+    f"Future dynamic features shape (batch_size, num_nodes, out_timesteps, num_dynamic_features):"
+)
+print(f"{sample_batch['x_dynamic_future'].shape}")
 print()
 print(f"Target shape (batch_size, num_nodes, out_timesteps):")
 print(f"{sample_batch['y'].shape}")
@@ -101,8 +123,15 @@ file_indices = np.zeros((traffic_dataset.total_timesteps_in_data - 1, 2), dtype=
 with h5py.File(file_path, "r") as f:
     # Reading the entire time_idx column can be slow
     time_column = f["data"][:, 1]
-    file_indices[:, 0] = np.searchsorted(time_column, np.arange(traffic_dataset.total_timesteps_in_data - 1), side='left')
-    file_indices[:, 1] = np.searchsorted(time_column, np.arange(traffic_dataset.total_timesteps_in_data - 1), side='right')
+    file_indices[:, 0] = np.searchsorted(
+        time_column, np.arange(traffic_dataset.total_timesteps_in_data - 1), side="left"
+    )
+    file_indices[:, 1] = np.searchsorted(
+        time_column,
+        np.arange(traffic_dataset.total_timesteps_in_data - 1),
+        side="right",
+    )
+
 
 def demo_no_sorting(idx):
     input_start_time = idx
@@ -129,10 +158,13 @@ def demo_sorted(idx):
         relevant_data = f["data"][start_index:end_index]
     return relevant_data
 
+
 relevant_data_no_sorting = demo_no_sorting(idx)
 relevant_data_sorted = demo_sorted(idx)
 
-assert (relevant_data_sorted == relevant_data_no_sorting).mean() == 1.0, "Data mismatch between sorted and unsorted methods"
+assert (relevant_data_sorted == relevant_data_no_sorting).mean() == 1.0, (
+    "Data mismatch between sorted and unsorted methods"
+)
 
 # %%
 # %lprun -f demo_no_sorting demo_no_sorting(idx)
