@@ -193,16 +193,16 @@ col_idx = np.random.randint(0, cols, num_nonzero)
 values = np.random.randint(1, 100, num_nonzero)
 data[row_idx, col_idx] = values
 
-df = pd.DataFrame(data, columns=range(1, cols + 1))
+df = pd.DataFrame(data, columns=range(1, cols+1))
 
-df.head(14).style.map(lambda x: "color: red" if x != 0 else "", subset=df.columns)
+df.head(14).style.map(lambda x: 'color: red' if x != 0 else '', subset=df.columns)
 
 # %%
 # Convert to long format for better visualization
-df_long = df.reset_index().melt(id_vars="index", var_name="Feature", value_name="Value")
-df_long = df_long[df_long["Value"] != 0]
-df_long.sort_values(by=["index", "Feature"], inplace=True)
-df_long.head().style.map(lambda x: "color: red" if x != 0 else "", subset=["Value"])
+df_long = df.reset_index().melt(id_vars='index', var_name='Feature', value_name='Value')
+df_long = df_long[df_long['Value'] != 0]
+df_long.sort_values(by=['index', 'Feature'], inplace=True)
+df_long.head().style.map(lambda x: 'color: red' if x != 0 else '', subset=['Value'])
 
 # %%
 # Size of df in KB
