@@ -58,6 +58,11 @@ class TrafficDataset(Dataset):
         self.graph, self.edge_index, self.node_to_id, self.id_to_node = (
             self._load_graph(graph_path)
         )
+        if node_seed not in self.graph.nodes():
+            raise ValueError(
+                f"Node seed {node_seed} not found in graph nodes. "
+                "Please choose a valid node ID."
+            )
         self.batch_mapping = self.get_first_n_reachable()
         self.static_features = self._load_static_features(static_data_path)
         self.num_nodes = self.static_features.shape[0]
@@ -179,7 +184,13 @@ class TrafficDataset(Dataset):
 
         return future_features_idxs
 
-    def reasign_seed(self, node_seed):
+    def reasign_seed(self, node_seed: str) -> None:
+        """Reassigns the node seed for batch selection."""
+        if node_seed not in self.graph.nodes():
+            raise ValueError(
+                f"Node seed {node_seed} not found in graph nodes. "
+                "Please choose a valid node ID."
+            )
         if node_seed != self.node_seed:
             self.node_seed = node_seed
 
