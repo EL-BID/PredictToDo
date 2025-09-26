@@ -109,14 +109,11 @@ class TrafficDataset(Dataset):
     def get_first_n_reachable(self) -> dict[str, list[str]]:
         """
         For every node in a graph, finds the first N reachable neighboring nodes
-        ordered by the fewest number of jumps (BFS order).
-
-        This function is efficient for large graphs.
-
+        ordered by the fewest number of jumps (BFS order). This function is
+        efficient for large graphs.
         Args:
             graph (nx.Graph): The input NetworkX graph.
             n_neighbors (int): The number of reachable nodes to find for each node.
-
         Returns:
             dict: A dictionary where each key is a node ID and the value is a
                 list of the first n_neighbors reachable nodes.
@@ -130,7 +127,7 @@ class TrafficDataset(Dataset):
             # in the order of a BFS
             bfs_edges_generator = nx.bfs_edges(self.graph, source=start_node)
 
-            reachable = []
+            reachable = [start_node]  # Include the start node itself
             # Since bfs_edges_generator is a generator, it's much more efficient
             # to iterate over it directly and break when we have enough neighbors
             for _, v in bfs_edges_generator:
