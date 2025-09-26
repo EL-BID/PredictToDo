@@ -141,7 +141,19 @@ class TrafficDataset(Dataset):
     def _get_future_dynamic_feature_idxs(
         self, metadata_paths: list[str]
     ) -> dict[str, list[int]]:
+        """
+        Maps future feature names to their corresponding indices in each dynamic
+        feature file.
+
+        Args:
+            metadata_paths (list[str]): List of paths to the metadata files.
+
+        Returns:
+            dict[str, list[int]]: A mapping from dataset file paths to lists of feature indices.
+        """
         future_features_idxs: dict[str, list[int]] = {}
+        found_features = set()
+
         for dataset_file, metadata_file in zip(self.dynamic_data_paths, metadata_paths):
             with open(metadata_file, "rb") as f:
                 metadata = pickle.load(f)
@@ -156,6 +168,15 @@ class TrafficDataset(Dataset):
                     for feature in features_in_this_file
                 ]
                 future_features_idxs.update({dataset_file: feature_idxs})
+                found_features.update(features_in_this_file)
+
+        # Check if any future features were not found
+        missing_features = set(self.future_features) - found_features
+        if missing_features:
+            raise ValueError(
+                f"The following future features were not found in any metadata file: {missing_features}"
+            )
+
         return future_features_idxs
 
     def reasign_seed(self, node_seed):
