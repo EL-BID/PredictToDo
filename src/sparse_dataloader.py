@@ -197,7 +197,13 @@ class TrafficDataset(Dataset):
     def _load_graph(
         self, graph_path
     ) -> tuple[nx.Graph, torch.Tensor, dict[str, int], dict[int, str]]:
-        """Loads the graph from a pickle file."""
+        """Loads the graph from a pickle file.
+        Args:
+            graph_path (str): The path to the graph pickle file.
+        Returns:
+            tuple[nx.Graph, torch.Tensor, dict[str, int], dict[int, str]]: The loaded graph,
+                edge index tensor, node to ID mapping, and ID to node mapping.
+        """
         with open(graph_path, "rb") as f:
             nx_graph = pickle.load(f)
 
@@ -229,6 +235,10 @@ class TrafficDataset(Dataset):
         Pre-computes the start and end row indices for every possible sample
         in each HDF5 file. This is done once at initialization to speed up
         __getitem__.
+
+        Returns:
+            tuple[dict[str, np.ndarray], dict[str, np.ndarray]]: The precomputed
+                start and end indices for dynamic and target data.
         """
         dynamic_data_indices = {}
         target_data_indices = {}
@@ -285,14 +295,28 @@ class TrafficDataset(Dataset):
         feature_offset_past: int,
         node_idx_to_batch_idx: dict[int, int],
     ) -> torch.Tensor:
+        """
+        Fetches and populates the past dynamic features for the given time window
+        and node batch into the provided dense tensor.
+        The first step is to read the relevant rows from the HDF5 file using
+        the precomputed indices, in order to avoid loading the entire file into memory.
+        Then, we filter and populate the dense tensor only for the nodes in the current batch.
+        Args:
+            x_dynamic_past (torch.Tensor): The dense tensor to populate.
+            file_path (str): Path to the HDF5 file.
+            input_start_time (int): Start time index of the input window.
+            input_end_time (int): End time index of the input window.
+            feature_offset_past (int): Offset for feature indices in the dense tensor.
+            node_idx_to_batch_idx (dict[int, int]): Mapping from global node indices to batch indices.
+        Returns:
+            torch.Tensor: The populated dense tensor with past dynamic features.
+        """
         with h5py.File(file_path, "r") as f:
             # We first fetch the relevant data for the past
             start_index = self.dynamic_data_indices[file_path][input_start_time, 0]
             end_index = self.dynamic_data_indices[file_path][input_end_time, 1]
             relevant_data_past = f["data"][start_index:end_index]  # type: ignore
             assert isinstance(relevant_data_past, np.ndarray)
-
-        # print("Found", relevant_data.shape[0], "relevant entries.\n")
 
         if relevant_data_past.shape[0] > 0:
             node_idx, time_idx, feature_idx, values = (
@@ -334,6 +358,22 @@ class TrafficDataset(Dataset):
         feature_offset_future: int,
         node_idx_to_batch_idx: dict[int, int],
     ) -> torch.Tensor:
+        """
+        Fetches and populates the future dynamic features for the given time window
+        and node batch into the provided dense tensor.
+        The first step is to read the relevant rows from the HDF5 file using
+        the precomputed indices, in order to avoid loading the entire file into memory.
+        Then, we filter and populate the dense tensor only for the nodes in the current batch.
+        Args:
+            x_dynamic_future (torch.Tensor): The dense tensor to populate.
+            file_path (str): Path to the HDF5 file.
+            target_start_time (int): Start time index of the target window.
+            target_end_time (int): End time index of the target window.
+            feature_offset_future (int): Offset for feature indices in the dense tensor.
+            node_idx_to_batch_idx (dict[int, int]): Mapping from global node indices to batch indices.
+        Returns:
+            torch.Tensor: The populated dense tensor with future dynamic features.
+        """
         with h5py.File(file_path, "r") as f:
             # Now the same but for the future
             future_feature_idxs = self.future_features_idxs[file_path]
@@ -559,7 +599,7 @@ if __name__ == "__main__":
         shuffle=True,
         num_workers=0,
         collate_fn=pad_collate,
-        persistent_workers=True,  # Keep workers alive between epochs
+        # persistent_workers=True,  # Keep workers alive between epochs, needs num_workers > 0
     )
 
     print(f"\nDataset size: {len(traffic_dataset)} samples")
