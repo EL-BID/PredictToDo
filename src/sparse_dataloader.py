@@ -66,7 +66,10 @@ class TrafficDataset(Dataset):
         self.batch_mapping = self.get_first_n_reachable()
         self.static_features = self._load_static_features(static_data_path)
         self.num_nodes = self.static_features.shape[0]
-        self.num_node_batches = math.ceil(self.num_nodes / self.node_batch_size)
+        # Number of different seed nodes needed to cover all nodes (for external training logic)
+        self.total_possible_node_batches = math.ceil(
+            self.num_nodes / self.node_batch_size
+        )
         self.num_static_features = self.static_features.shape[1]
 
         # Open dynamic data files and get metadata
@@ -270,19 +273,27 @@ class TrafficDataset(Dataset):
 
     def __len__(self):
         """
-        Returns the total number of samples, which is the product of
-        the number of possible time windows and the number of node batches.
+        Returns the total number of samples for the current node seed.
+        Since the dataset only provides samples for the current node_seed's
+        neighborhood, the length is just the number of time windows.
+        Node batching is handled externally by reassigning the seed.
         """
         if self.total_timesteps_in_data < self.total_timesteps_window:
             return 0
         num_time_windows = (
             self.total_timesteps_in_data - self.total_timesteps_window + 1
         )
-        # Each node has its own batch when chosen as seed
-        return num_time_windows * self.num_node_batches
+        return num_time_windows
 
     def _get_time_and_node_indices(self, idx) -> tuple[int, list[int]]:
-        time_idx = idx // self.num_node_batches
+        """
+        Given a global index, computes the corresponding time index and
+        node indices.
+        """
+        num_time_windows = (
+            self.total_timesteps_in_data - self.total_timesteps_window + 1
+        )
+        time_idx = idx % num_time_windows
         neighbors = self.batch_mapping.get(self.node_seed, [])
         return time_idx, [self.node_to_id[n] for n in neighbors]
 
