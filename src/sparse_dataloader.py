@@ -335,7 +335,17 @@ class TrafficDataset(Dataset):
         )
         time_idx = idx % num_time_windows
         neighbors = self.batch_mapping.get(self.node_seed, [])
-        return time_idx, [self.node_to_id[n] for n in neighbors]
+        node_indices = [self.node_to_id[n] for n in neighbors]
+
+        # Validate that all node indices are within bounds
+        for node_idx in node_indices:
+            if node_idx >= self.num_nodes:
+                raise ValueError(
+                    f"Node index {node_idx} is out of bounds for graph with {self.num_nodes} nodes. "
+                    f"This indicates an inconsistency between the graph and the data mappings."
+                )
+
+        return time_idx, node_indices
 
     def _get_dynamic_past_features(
         self,
