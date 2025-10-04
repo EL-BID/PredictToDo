@@ -87,6 +87,18 @@ class TrafficDataset(Dataset):
             "wind_speed",
             "precipitation",
         ]
+        self.station_col_map = {
+            "wind_direction": "estacion_direccion_viento",
+            "humidity": "estacion_humedad",
+            "wind_speed": "estacion_velocidad_viento",
+            "precipitation": "estacion_precipitacion",
+        }
+        self.value_col_map = {
+            "wind_direction": "direccion_viento",
+            "humidity": "humedad",
+            "wind_speed": "velocidad_viento",
+            "precipitation": "precipitacion",
+        }
         self.num_weather_features = 0
         if self.include_weather and self.weather_data_dir:
             self.weather_stations, self.weather_data = self._load_weather_data()
@@ -489,7 +501,6 @@ class TrafficDataset(Dataset):
         time_start: int | np.ndarray,
         time_end: int | np.ndarray,
         node_indices: list[int],
-        node_idx_to_batch_idx: dict[int, int],
     ) -> torch.Tensor:
         """
         Fetches and populates weather features for the given time window and node batch.
@@ -499,7 +510,6 @@ class TrafficDataset(Dataset):
             time_start (int | np.ndarray): Start time index.
             time_end (int | np.ndarray): End time index.
             node_indices (list[int]): Global node indices for the current batch.
-            node_idx_to_batch_idx (dict[int, int]): Mapping from global to batch indices.
 
         Returns:
             torch.Tensor: The populated tensor with weather features.
@@ -514,7 +524,7 @@ class TrafficDataset(Dataset):
         for feature_idx, feature_name in enumerate(self.weather_features):
             weather_df = self.weather_data[feature_name]
 
-            # Filter by time range
+            # Filter by time range once
             time_filtered = weather_df[
                 (weather_df["time_idx"] >= time_start_int)
                 & (weather_df["time_idx"] <= time_end_int)
@@ -523,40 +533,69 @@ class TrafficDataset(Dataset):
             if time_filtered.empty:
                 continue
 
-            # Get the station column name for this feature
-            station_col_map = {
-                "wind_direction": "estacion_direccion_viento",
-                "humidity": "estacion_humedad",
-                "wind_speed": "estacion_velocidad_viento",
-                "precipitation": "estacion_precipitacion",
-            }
-            station_col = station_col_map[feature_name]
-            value_col_map = {
-                "wind_direction": "direccion_viento",
-                "humidity": "humedad",
-                "wind_speed": "velocidad_viento",
-                "precipitation": "precipitacion",
-            }
-            value_col = value_col_map[feature_name]
+            station_col = self.station_col_map[feature_name]
+            value_col = self.value_col_map[feature_name]
 
-            # For each node in the batch, get its weather station and populate features
+            # Collect all relevant station names for this batch
+            relevant_stations = []
+            node_to_batch_idx = {}
+
             for batch_idx, node_id in enumerate(node_ids):
                 if self.weather_stations and node_id in self.weather_stations:
                     station_name = self.weather_stations[node_id][station_col]
+                    relevant_stations.append(station_name)
+                    node_to_batch_idx[node_id] = batch_idx
 
-                    # Get data for this specific station
-                    station_data = time_filtered[
-                        time_filtered[station_col] == station_name
-                    ]
+            if not relevant_stations:
+                continue
 
-                    if not station_data.empty:
-                        # Populate the tensor
-                        for _, row in station_data.iterrows():
-                            time_offset = int(row["time_idx"]) - time_start_int
-                            if 0 <= time_offset < self.total_timesteps_window:
-                                x_weather[batch_idx, time_offset, feature_idx] = float(
-                                    row[value_col]
-                                )
+            # Filter for all relevant stations at once using isin()
+            relevant_data = time_filtered[
+                time_filtered[station_col].isin(relevant_stations)
+            ]
+
+            if relevant_data.empty:
+                continue
+
+            # Extract arrays for faster operations
+            station_names = relevant_data[station_col].values
+            time_indices = relevant_data["time_idx"].values
+            values = relevant_data[value_col].values
+
+            # Create a reverse mapping from station to nodes for efficient lookup
+            station_to_nodes = {}
+            for node_id in node_ids:
+                if self.weather_stations and node_id in self.weather_stations:
+                    station_name = self.weather_stations[node_id][station_col]
+                    if station_name not in station_to_nodes:
+                        station_to_nodes[station_name] = []
+                    station_to_nodes[station_name].append(node_id)
+
+            # Collect all indices and values for vectorized assignment
+            batch_indices = []
+            time_offsets = []
+            tensor_values = []
+
+            for i in range(len(station_names)):
+                station_name = station_names[i]
+                time_idx = time_indices[i]
+                value = values[i]
+
+                time_offset = int(time_idx) - time_start_int
+                if 0 <= time_offset < self.total_timesteps_window:
+                    # Collect indices for all nodes that use this station
+                    if station_name in station_to_nodes:
+                        for node_id in station_to_nodes[station_name]:
+                            batch_idx = node_to_batch_idx[node_id]
+                            batch_indices.append(batch_idx)
+                            time_offsets.append(time_offset)
+                            tensor_values.append(float(value))
+
+            # Vectorized tensor assignment (much faster than individual assignments)
+            if batch_indices:
+                x_weather[batch_indices, time_offsets, feature_idx] = torch.tensor(
+                    tensor_values, dtype=x_weather.dtype, device=x_weather.device
+                )
 
         return x_weather
 
@@ -682,7 +721,6 @@ class TrafficDataset(Dataset):
                 time_start=time_idx,
                 time_end=time_idx + self.total_timesteps_window - 1,
                 node_indices=node_indices,
-                node_idx_to_batch_idx=node_idx_to_batch_idx,
             )
 
         # Use torch_geometric's subgraph utility to get the edges for the
