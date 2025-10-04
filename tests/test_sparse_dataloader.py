@@ -1203,7 +1203,6 @@ class TestTrafficDataset:
         time_start = 0
         time_end = total_timesteps - 1
         node_indices = [0, 1, 2]  # First 3 nodes
-        node_idx_to_batch_idx = {0: 0, 1: 1, 2: 2}
 
         # Create empty weather tensor
         x_weather = torch.zeros(
@@ -1216,7 +1215,6 @@ class TestTrafficDataset:
             time_start=time_start,
             time_end=time_end,
             node_indices=node_indices,
-            node_idx_to_batch_idx=node_idx_to_batch_idx,
         )
 
         # Check that result is the same tensor object
