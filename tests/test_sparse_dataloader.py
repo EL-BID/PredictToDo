@@ -1040,8 +1040,12 @@ class TestTrafficDataset:
         data_list = []
 
         # Create predictable pattern: value = (node_idx * 10 + time_idx) * 10 + feature_idx
-        for time_idx in range(5):  # 5 timesteps
-            for node_idx in range(5):  # 5 nodes
+        # Use same dimensions as the test graph (10 nodes, 50 timesteps) to avoid index mismatches
+        num_nodes = 10  # Match the test graph
+        num_timesteps = 50  # Match the test data generator
+
+        for time_idx in range(num_timesteps):
+            for node_idx in range(num_nodes):
                 for feature_idx, _ in enumerate(feature_names):
                     # Create predictable values that we can verify in tests
                     value = (node_idx * 10 + time_idx) * 10 + feature_idx
@@ -1060,11 +1064,11 @@ class TestTrafficDataset:
         with h5py.File(h5_path, "w") as f:
             f.create_dataset("data", data=data_array)
 
-        # Create metadata
-        node_ids = [f"node_{i}" for i in range(5)]
+        # Create metadata - use same dimensions as the test graph
+        node_ids = [f"node_{i}" for i in range(num_nodes)]  # Match test graph
         node_idx_map = {node: i for i, node in enumerate(node_ids)}
         timeframes = pd.date_range(
-            start="2024-01-01", periods=5, freq="15min"
+            start="2024-01-01", periods=num_timesteps, freq="15min"
         ).to_list()
         time_idx_map = {ts: i for i, ts in enumerate(timeframes)}
         feature_idx_map = {name: i for i, name in enumerate(feature_names)}
@@ -1086,8 +1090,12 @@ class TestTrafficDataset:
         data_list = []
 
         # Create predictable target pattern: value = node_idx * 10 + time_idx + 100
-        for time_idx in range(5):
-            for node_idx in range(5):
+        # Use same dimensions as the test graph (10 nodes, 50 timesteps) to avoid index mismatches
+        num_nodes = 10  # Match the test graph
+        num_timesteps = 50  # Match the test data generator
+
+        for time_idx in range(num_timesteps):
+            for node_idx in range(num_nodes):
                 value = node_idx * 10 + time_idx + 100
                 data_list.append(
                     [node_idx, time_idx, 0, float(value)]
@@ -1373,6 +1381,7 @@ class TestTrafficDataset:
         # Test specific node-station mappings
         generator = setup["generator"]
         for i, node_id in enumerate(generator.node_ids[:5]):  # Test first 5 nodes
+            assert dataset.weather_stations is not None
             station_mapping = dataset.weather_stations[node_id]
 
             # Verify the round-robin assignment matches our test data generation
@@ -1494,3 +1503,44 @@ class TestTrafficDataset:
         assert hasattr(sample, "x_dynamic_future")
         assert hasattr(sample, "y")
         assert hasattr(sample, "edge_index")
+
+    def test_node_index_safeguard(self, test_data_setup):
+        """Test that the node index safeguard properly raises an exception when node indices are out of bounds."""
+        setup = test_data_setup
+
+        # Create a dataset first to get access to its internals
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=5,
+            out_timesteps=3,
+            future_features=["coi_puntos"],
+            node_batch_size=4,
+            node_seed="node_0",
+        )
+
+        # Artificially create an out-of-bounds scenario by manipulating the batch_mapping
+        # to include a node index that exceeds the number of nodes in the graph
+        original_mapping = dataset.batch_mapping[dataset.node_seed].copy()
+
+        # Add an invalid node that maps to an out-of-bounds index
+        invalid_node_id = "invalid_node"
+        dataset.node_to_id[invalid_node_id] = (
+            dataset.num_nodes + 5
+        )  # Out of bounds index
+        dataset.batch_mapping[dataset.node_seed] = original_mapping + [invalid_node_id]
+
+        # Now try to access the dataset, which should trigger the safeguard
+        with pytest.raises(
+            ValueError,
+            match=r"Node index \d+ is out of bounds for graph with \d+ nodes",
+        ):
+            # This should trigger _get_time_and_node_indices and hit the safeguard
+            dataset._get_time_and_node_indices(0)
+
+        # Restore original state for cleanup
+        del dataset.node_to_id[invalid_node_id]
+        dataset.batch_mapping[dataset.node_seed] = original_mapping
