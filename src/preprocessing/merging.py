@@ -52,8 +52,8 @@ class SparseDatasetGenerator:
             df = df.set_index([node_col, timeframe_col])
 
         # Convert the second level of the index to a datetime
-        df.index = df.index.set_levels(
-            [df.index.levels[0], pd.to_datetime(df.index.levels[1])],
+        df.index = df.index.set_levels(  # type: ignore
+            [df.index.levels[0], pd.to_datetime(df.index.levels[1])],  # type: ignore
             level=[0, 1],
         )
 
