@@ -4,6 +4,7 @@ import pickle
 import h5py
 import networkx as nx
 import numpy as np
+import pandas as pd
 import torch
 from scipy.sparse import coo_matrix
 from torch_geometric.data import Data, Dataset
@@ -30,6 +31,8 @@ class TrafficDataset(Dataset):
         future_features: list[str],
         node_batch_size: int = 500,
         node_seed: str = "0_FT.5",
+        weather_data_dir: str | None = None,
+        include_weather: bool = False,
     ):
         """
         Args:
@@ -42,6 +45,8 @@ class TrafficDataset(Dataset):
             future_features (list of str): List of dynamic feature names available in the future.
             node_batch_size (int): Number of reachable neighboring nodes to include in each batch.
             node_seed (str): The node ID to use as the seed for the first batch.
+            weather_data_dir (str, optional): Directory containing processed weather data files.
+            include_weather (bool): Whether to include weather features in the dataset.
         """
         super().__init__()
         self.node_seed = node_seed
@@ -52,6 +57,8 @@ class TrafficDataset(Dataset):
         self.target_data_path = target_data_path
         self.node_batch_size = node_batch_size
         self.future_features = future_features
+        self.include_weather = include_weather
+        self.weather_data_dir = weather_data_dir
 
         # Load static data and graph
         # These are assumed to be small enough to fit in memory
@@ -71,6 +78,19 @@ class TrafficDataset(Dataset):
             self.num_nodes / self.node_batch_size
         )
         self.num_static_features = self.static_features.shape[1]
+
+        # Load weather data if requested
+        self.weather_stations = None
+        self.weather_features = [
+            "wind_direction",
+            "humidity",
+            "wind_speed",
+            "precipitation",
+        ]
+        self.num_weather_features = 0
+        if self.include_weather and self.weather_data_dir:
+            self.weather_stations, self.weather_data = self._load_weather_data()
+            self.num_weather_features = len(self.weather_features)
 
         # Open dynamic data files and get metadata
         self.total_timesteps_in_data = 0
@@ -230,6 +250,26 @@ class TrafficDataset(Dataset):
         del data  # Free memory
 
         return torch.from_numpy(sparse_matrix.toarray()).float()
+
+    def _load_weather_data(self) -> tuple[dict, dict[str, pd.DataFrame]]:
+        """
+        Load weather data for efficient access during training.
+
+        Returns:
+            tuple: (weather_stations mapping, weather_data dict)
+        """
+        # Load stations mapping
+        stations_path = f"{self.weather_data_dir}/weather_stations.pkl"
+        with open(stations_path, "rb") as f:
+            weather_stations = pickle.load(f)
+
+        # Load weather dataframes
+        weather_data = {}
+        for feature in self.weather_features:
+            weather_path = f"{self.weather_data_dir}/weather_{feature}.parquet"
+            weather_data[feature] = pd.read_parquet(weather_path)
+
+        return weather_stations, weather_data
 
     def _precompute_time_indices(
         self,
@@ -433,6 +473,83 @@ class TrafficDataset(Dataset):
 
         return x_dynamic_future
 
+    def _get_weather_features(
+        self,
+        x_weather: torch.Tensor,
+        time_start: int | np.ndarray,
+        time_end: int | np.ndarray,
+        node_indices: list[int],
+        node_idx_to_batch_idx: dict[int, int],
+    ) -> torch.Tensor:
+        """
+        Fetches and populates weather features for the given time window and node batch.
+
+        Args:
+            x_weather (torch.Tensor): The dense tensor to populate with weather features.
+            time_start (int | np.ndarray): Start time index.
+            time_end (int | np.ndarray): End time index.
+            node_indices (list[int]): Global node indices for the current batch.
+            node_idx_to_batch_idx (dict[int, int]): Mapping from global to batch indices.
+
+        Returns:
+            torch.Tensor: The populated tensor with weather features.
+        """
+        # Ensure time indices are integers
+        time_start_int = int(np.asarray(time_start).item())
+        time_end_int = int(np.asarray(time_end).item())
+
+        # Get the relevant node IDs (convert from indices back to node IDs)
+        node_ids = [self.id_to_node[idx] for idx in node_indices]
+
+        for feature_idx, feature_name in enumerate(self.weather_features):
+            weather_df = self.weather_data[feature_name]
+
+            # Filter by time range
+            time_filtered = weather_df[
+                (weather_df["time_idx"] >= time_start_int)
+                & (weather_df["time_idx"] <= time_end_int)
+            ]
+
+            if time_filtered.empty:
+                continue
+
+            # Get the station column name for this feature
+            station_col_map = {
+                "wind_direction": "estacion_direccion_viento",
+                "humidity": "estacion_humedad",
+                "wind_speed": "estacion_velocidad_viento",
+                "precipitation": "estacion_precipitacion",
+            }
+            station_col = station_col_map[feature_name]
+            value_col_map = {
+                "wind_direction": "direccion_viento",
+                "humidity": "humedad",
+                "wind_speed": "velocidad_viento",
+                "precipitation": "precipitacion",
+            }
+            value_col = value_col_map[feature_name]
+
+            # For each node in the batch, get its weather station and populate features
+            for batch_idx, node_id in enumerate(node_ids):
+                if self.weather_stations and node_id in self.weather_stations:
+                    station_name = self.weather_stations[node_id][station_col]
+
+                    # Get data for this specific station
+                    station_data = time_filtered[
+                        time_filtered[station_col] == station_name
+                    ]
+
+                    if not station_data.empty:
+                        # Populate the tensor
+                        for _, row in station_data.iterrows():
+                            time_offset = int(row["time_idx"]) - time_start_int
+                            if 0 <= time_offset < self.total_timesteps_window:
+                                x_weather[batch_idx, time_offset, feature_idx] = float(
+                                    row[value_col]
+                                )
+
+        return x_weather
+
     def __getitem__(self, idx) -> Data:
         """
         Returns a single sample, which may be a subset of nodes for a specific
@@ -458,6 +575,15 @@ class TrafficDataset(Dataset):
         # The same for the dynamic future features
         x_dynamic_future = torch.zeros(
             (batch_size, self.out_timesteps, self.num_dynamic_future_features)
+        )
+
+        # Weather features tensor (for both past and future since weather is always available)
+        x_weather = (
+            torch.zeros(
+                (batch_size, self.total_timesteps_window, self.num_weather_features)
+            )
+            if self.include_weather
+            else None
         )
 
         feature_offset_past, feature_offset_future = 0, 0
@@ -511,7 +637,7 @@ class TrafficDataset(Dataset):
         # print("Found", target_relevant_data.shape[0], "relevant target entries.\n")
 
         if target_relevant_data.shape[0] > 0:
-            node_idx, time_idx, values = (
+            target_node_idx, target_time_idx, target_values = (
                 target_relevant_data[:, 0].astype(int),
                 target_relevant_data[:, 1].astype(int) - target_start_time,
                 # target_relevant_data[:, 2].astype(int), # feature_idx is always 0
@@ -519,11 +645,11 @@ class TrafficDataset(Dataset):
             )
 
             # Only populate targets for nodes in the current batch
-            batch_mask = np.isin(node_idx, list(node_idx_to_batch_idx.keys()))
+            batch_mask = np.isin(target_node_idx, list(node_idx_to_batch_idx.keys()))
             if batch_mask.sum() > 0:
-                batch_node_idx = node_idx[batch_mask]
-                batch_time_idx = time_idx[batch_mask]
-                batch_values = values[batch_mask]
+                batch_node_idx = target_node_idx[batch_mask]
+                batch_time_idx = target_time_idx[batch_mask]
+                batch_values = target_values[batch_mask]
 
                 # Convert global node indices to batch indices
                 batch_node_indices = [
@@ -534,6 +660,21 @@ class TrafficDataset(Dataset):
                     batch_values
                 ).float()
 
+        # Process weather features if enabled
+        if (
+            self.include_weather
+            and x_weather is not None
+            and self.weather_stations is not None
+        ):
+            # time_idx should already be an int from _get_time_and_node_indices
+            x_weather = self._get_weather_features(
+                x_weather=x_weather,
+                time_start=time_idx,
+                time_end=time_idx + self.total_timesteps_window - 1,
+                node_indices=node_indices,
+                node_idx_to_batch_idx=node_idx_to_batch_idx,
+            )
+
         # Use torch_geometric's subgraph utility to get the edges for the
         # node subset and automatically relabel the node indices from 0
         edge_index_sub, _ = subgraph(
@@ -542,14 +683,21 @@ class TrafficDataset(Dataset):
             relabel_nodes=True,
             num_nodes=self.num_nodes,
         )
-        return Data(
-            x_static=self.static_features[node_indices],
-            x_dynamic_past=x_dynamic_past,
-            x_dynamic_future=x_dynamic_future,
-            y=y,
-            edge_index=edge_index_sub,
-            num_nodes=self.num_nodes,
-        )
+
+        # Create the data object with weather features if available
+        data_dict = {
+            "x_static": self.static_features[node_indices],
+            "x_dynamic_past": x_dynamic_past,
+            "x_dynamic_future": x_dynamic_future,
+            "y": y,
+            "edge_index": edge_index_sub,
+            "num_nodes": self.num_nodes,
+        }
+
+        if self.include_weather and x_weather is not None:
+            data_dict["x_weather"] = x_weather
+
+        return Data(**data_dict)
 
 
 if __name__ == "__main__":
@@ -599,6 +747,8 @@ if __name__ == "__main__":
             "MANIFESTACION",
         ],
         node_batch_size=500,
+        weather_data_dir=f"{processed_data_dir}/sparse_datasets",
+        include_weather=True,
     )
     print("Dataset initialized.")
     print(f"Total samples in dataset: {len(traffic_dataset)}")

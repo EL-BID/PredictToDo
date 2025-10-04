@@ -325,6 +325,97 @@ class SparseDatasetGenerator:
 
         return new_graph
 
+    def _process_weather_data(
+        self,
+        stations_df: pd.DataFrame,
+        wind_direction_df: pd.DataFrame,
+        humidity_df: pd.DataFrame,
+        wind_speed_df: pd.DataFrame,
+        precipitation_df: pd.DataFrame,
+        output_dir: str,
+    ) -> None:
+        """
+        Process weather data into efficient format for the TrafficDataset.
+
+        This method:
+        1. Saves the stations mapping as a pickle file for in-memory loading
+        2. Converts weather data to a time-indexed format that can be efficiently
+           filtered by time ranges during training
+
+        Args:
+            stations_df: DataFrame mapping road_id to weather station names
+            wind_direction_df: DataFrame with wind direction data
+            humidity_df: DataFrame with humidity data
+            wind_speed_df: DataFrame with wind speed data
+            precipitation_df: DataFrame with precipitation data
+            output_dir: Directory to save processed files
+        """
+        import pickle
+
+        # Save stations mapping for in-memory loading
+        stations_output_path = f"{output_dir}/weather_stations.pkl"
+        with open(stations_output_path, "wb") as f:
+            pickle.dump(stations_df.to_dict("index"), f)
+        print(f"Saved weather stations mapping to {stations_output_path}")
+
+        # Process each weather dataframe
+        weather_datasets = {
+            "wind_direction": (
+                wind_direction_df,
+                "estacion_direccion_viento",
+                "direccion_viento",
+            ),
+            "humidity": (humidity_df, "estacion_humedad", "humedad"),
+            "wind_speed": (
+                wind_speed_df,
+                "estacion_velocidad_viento",
+                "velocidad_viento",
+            ),
+            "precipitation": (
+                precipitation_df,
+                "estacion_precipitacion",
+                "precipitacion",
+            ),
+        }
+
+        for weather_type, (df, station_col, value_col) in weather_datasets.items():
+            print(f"Processing {weather_type} data...")
+
+            # Skip empty DataFrames
+            if df.empty:
+                print(f"Skipping {weather_type} - DataFrame is empty")
+                continue
+
+            # The weather DataFrames are already in long format with timestamp as index
+            # Reset index to make timestamp a column
+            df_reset = df.reset_index()
+
+            # Remove rows with NaN values
+            df_clean = df_reset.dropna(subset=[value_col])
+
+            # Filter out rows where timestamp is outside our timeframe
+            df_filtered = df_clean[
+                (df_clean["timestamp"] >= self.min_timeframe)
+                & (df_clean["timestamp"] <= self.max_timeframe)
+            ]
+
+            # Add time index mapping
+            df_filtered["time_idx"] = df_filtered["timestamp"].map(self.time_idx_map)
+
+            # Remove rows where time_idx mapping failed (timestamps not in our time grid)
+            df_filtered = df_filtered.dropna(subset=["time_idx"])
+            df_filtered["time_idx"] = df_filtered["time_idx"].astype(int)
+
+            # Sort by timestamp for efficient access
+            df_filtered = df_filtered.sort_values("time_idx")
+
+            # Save as parquet for efficient loading and filtering
+            output_path = f"{output_dir}/weather_{weather_type}.parquet"
+            df_filtered.to_parquet(output_path, index=False)
+            print(
+                f"Saved {weather_type} data to {output_path} ({len(df_filtered)} records)"
+            )
+
 
 if __name__ == "__main__":
     processed_data_dir = "data/datos_procesados"
@@ -473,6 +564,36 @@ if __name__ == "__main__":
         return_df=False,
     )
     del jams_df  # Clean up memory
+
+    # Weather data processing
+    print("Processing weather data...")
+
+    # Load the stations mapping
+    stations_df = pd.read_parquet(f"{processed_data_dir}/weather/stations.parquet")
+
+    # Load weather dataframes
+    wind_direction_df = pd.read_parquet(
+        f"{processed_data_dir}/weather/direccion_viento.parquet"
+    )
+    humidity_df = pd.read_parquet(f"{processed_data_dir}/weather/humedad.parquet")
+    wind_speed_df = pd.read_parquet(
+        f"{processed_data_dir}/weather/velocidad_viento.parquet"
+    )
+    precipitation_df = pd.read_parquet(
+        f"{processed_data_dir}/weather/precipitacion.parquet"
+    )
+
+    # Process weather data into efficient format
+    weather_data = dataset_generator._process_weather_data(
+        stations_df=stations_df,
+        wind_direction_df=wind_direction_df,
+        humidity_df=humidity_df,
+        wind_speed_df=wind_speed_df,
+        precipitation_df=precipitation_df,
+        output_dir=f"{processed_data_dir}/sparse_datasets/",
+    )
+
+    del stations_df, wind_direction_df, humidity_df, wind_speed_df, precipitation_df
 
     print("---------------------------------------------------")
     print("----- Sparse datasets generated successfully. -----")
