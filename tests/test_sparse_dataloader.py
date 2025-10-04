@@ -133,6 +133,90 @@ class TestDataGenerator:
 
         return target_path
 
+    def create_weather_stations(self, temp_dir: str) -> str:
+        """Create weather stations mapping for testing."""
+        # Create a simple mapping where each node uses a predictable weather station
+        weather_stations = {}
+
+        for i, node_id in enumerate(self.node_ids):
+            # Assign stations in a round-robin fashion
+            wind_station = f"WindStation_{i % 3}"  # 3 wind stations
+            humidity_station = f"HumidityStation_{i % 2}"  # 2 humidity stations
+            speed_station = f"SpeedStation_{i % 3}"
+            precip_station = f"PrecipStation_{i % 2}"
+
+            weather_stations[node_id] = {
+                "estacion_direccion_viento": wind_station,
+                "estacion_humedad": humidity_station,
+                "estacion_velocidad_viento": speed_station,
+                "estacion_precipitacion": precip_station,
+            }
+
+        stations_path = os.path.join(temp_dir, "weather_stations.pkl")
+        with open(stations_path, "wb") as f:
+            pickle.dump(weather_stations, f)
+
+        return stations_path
+
+    def create_weather_data(self, temp_dir: str, feature_name: str) -> str:
+        """Create deterministic weather data for testing."""
+        # Map feature names to column names
+        station_col_map = {
+            "wind_direction": "estacion_direccion_viento",
+            "humidity": "estacion_humedad",
+            "wind_speed": "estacion_velocidad_viento",
+            "precipitation": "estacion_precipitacion",
+        }
+        value_col_map = {
+            "wind_direction": "direccion_viento",
+            "humidity": "humedad",
+            "wind_speed": "velocidad_viento",
+            "precipitation": "precipitacion",
+        }
+
+        station_col = station_col_map[feature_name]
+        value_col = value_col_map[feature_name]
+
+        # Create deterministic weather data
+        data_rows = []
+
+        # For each timestep, create weather data for all relevant stations
+        for time_idx in range(self.num_timesteps):
+            # Get unique stations for this feature
+            if feature_name == "wind_direction":
+                stations = [f"WindStation_{i}" for i in range(3)]
+                base_value = 100
+            elif feature_name == "humidity":
+                stations = [f"HumidityStation_{i}" for i in range(2)]
+                base_value = 50
+            elif feature_name == "wind_speed":
+                stations = [f"SpeedStation_{i}" for i in range(3)]
+                base_value = 10
+            else:  # precipitation
+                stations = [f"PrecipStation_{i}" for i in range(2)]
+                base_value = 0
+
+            for station_idx, station_name in enumerate(stations):
+                # Create predictable values: base_value + time_idx + station_idx
+                value = base_value + time_idx + station_idx
+
+                row = {
+                    station_col: station_name,
+                    value_col: float(value),
+                    "time_idx": time_idx,
+                    "timestamp": self.timeframes[time_idx],
+                }
+                data_rows.append(row)
+
+        # Create DataFrame
+        df = pd.DataFrame(data_rows)
+
+        # Save as parquet
+        weather_path = os.path.join(temp_dir, f"weather_{feature_name}.parquet")
+        df.to_parquet(weather_path, index=False)
+
+        return weather_path
+
 
 class TestTrafficDataset:
     """Test suite for TrafficDataset class."""
@@ -174,6 +258,14 @@ class TestTrafficDataset:
 
         target_path = generator.create_target_data(temp_dir)
 
+        # Create weather data files
+        weather_stations_path = generator.create_weather_stations(temp_dir)
+        weather_data_paths = {}
+        for feature in ["wind_direction", "humidity", "wind_speed", "precipitation"]:
+            weather_data_paths[feature] = generator.create_weather_data(
+                temp_dir, feature
+            )
+
         setup_data = {
             "temp_dir": temp_dir,
             "graph_path": graph_path,
@@ -182,6 +274,8 @@ class TestTrafficDataset:
             "metadata_paths": metadata_paths,
             "target_path": target_path,
             "generator": generator,
+            "weather_stations_path": weather_stations_path,
+            "weather_data_paths": weather_data_paths,
         }
 
         yield setup_data
@@ -1031,3 +1125,372 @@ class TestTrafficDataset:
             f.create_dataset("data", data=data_array)
 
         return static_path
+
+    def test_weather_features_initialization(self, test_data_setup):
+        """Test that weather features are properly initialized when include_weather=True."""
+        setup = test_data_setup
+
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=5,
+            out_timesteps=3,
+            future_features=["coi_puntos"],
+            node_batch_size=3,
+            node_seed="node_0",
+            weather_data_dir=setup["temp_dir"],
+            include_weather=True,
+        )
+
+        # Check that weather components are properly initialized
+        assert dataset.include_weather is True
+        assert dataset.weather_data_dir == setup["temp_dir"]
+        assert dataset.weather_stations is not None
+        assert dataset.weather_data is not None
+        assert (
+            len(dataset.weather_features) == 4
+        )  # wind_direction, humidity, wind_speed, precipitation
+        assert dataset.num_weather_features == 4
+
+        # Check that weather data was loaded
+        for feature in dataset.weather_features:
+            assert feature in dataset.weather_data
+            assert isinstance(dataset.weather_data[feature], pd.DataFrame)
+            assert not dataset.weather_data[feature].empty
+
+        # Check weather stations mapping
+        for node_id in setup["generator"].node_ids:
+            assert node_id in dataset.weather_stations
+            station_mapping = dataset.weather_stations[node_id]
+            assert "estacion_direccion_viento" in station_mapping
+            assert "estacion_humedad" in station_mapping
+            assert "estacion_velocidad_viento" in station_mapping
+            assert "estacion_precipitacion" in station_mapping
+
+    def test_get_weather_features_method(self, test_data_setup):
+        """Test the _get_weather_features method in isolation."""
+        setup = test_data_setup
+
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=5,
+            out_timesteps=3,
+            future_features=["coi_puntos"],
+            node_batch_size=3,
+            node_seed="node_0",
+            weather_data_dir=setup["temp_dir"],
+            include_weather=True,
+        )
+
+        # Test parameters
+        batch_size = 3
+        total_timesteps = 8  # in_timesteps + out_timesteps
+        time_start = 0
+        time_end = total_timesteps - 1
+        node_indices = [0, 1, 2]  # First 3 nodes
+        node_idx_to_batch_idx = {0: 0, 1: 1, 2: 2}
+
+        # Create empty weather tensor
+        x_weather = torch.zeros(
+            (batch_size, total_timesteps, dataset.num_weather_features)
+        )
+
+        # Call the method
+        result_tensor = dataset._get_weather_features(
+            x_weather=x_weather,
+            time_start=time_start,
+            time_end=time_end,
+            node_indices=node_indices,
+            node_idx_to_batch_idx=node_idx_to_batch_idx,
+        )
+
+        # Check that result is the same tensor object
+        assert result_tensor is x_weather
+        assert result_tensor.shape == (
+            batch_size,
+            total_timesteps,
+            dataset.num_weather_features,
+        )
+
+        # Check that values were populated (at least some non-zero values)
+        assert torch.any(result_tensor != 0), (
+            "Weather tensor should have non-zero values"
+        )
+
+        # Test specific values for deterministic data
+        # Node 0 uses:
+        # - WindStation_0 for wind_direction
+        # - HumidityStation_0 for humidity
+        # - SpeedStation_0 for wind_speed
+        # - PrecipStation_0 for precipitation
+
+        # Check first timestep (time_idx=0) for first node (batch_idx=0)
+        # Expected values based on our deterministic formula: base_value + time_idx + station_idx
+        expected_wind = 100 + 0 + 0  # base=100, time=0, station=0
+        expected_humidity = 50 + 0 + 0  # base=50, time=0, station=0
+        expected_speed = 10 + 0 + 0  # base=10, time=0, station=0
+        expected_precip = 0 + 0 + 0  # base=0, time=0, station=0
+
+        assert result_tensor[0, 0, 0].item() == expected_wind
+        assert result_tensor[0, 0, 1].item() == expected_humidity
+        assert result_tensor[0, 0, 2].item() == expected_speed
+        assert result_tensor[0, 0, 3].item() == expected_precip
+
+        # Check second timestep (time_idx=1) for first node
+        expected_wind_t1 = 100 + 1 + 0  # base=100, time=1, station=0
+        expected_humidity_t1 = 50 + 1 + 0  # base=50, time=1, station=0
+        assert result_tensor[0, 1, 0].item() == expected_wind_t1
+        assert result_tensor[0, 1, 1].item() == expected_humidity_t1
+
+        # Check different node (node_1 uses different stations)
+        # Node 1 uses:
+        # - WindStation_1 for wind_direction
+        # - HumidityStation_1 for humidity
+        expected_wind_n1 = 100 + 0 + 1  # base=100, time=0, station=1
+        expected_humidity_n1 = 50 + 0 + 1  # base=50, time=0, station=1
+        assert result_tensor[1, 0, 0].item() == expected_wind_n1
+        assert result_tensor[1, 0, 1].item() == expected_humidity_n1
+
+    def test_getitem_with_weather_enabled(self, test_data_setup):
+        """Test __getitem__ method when weather is enabled."""
+        setup = test_data_setup
+
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=5,
+            out_timesteps=3,
+            future_features=["coi_puntos"],
+            node_batch_size=4,
+            node_seed="node_0",
+            weather_data_dir=setup["temp_dir"],
+            include_weather=True,
+        )
+
+        # Get a sample
+        sample = dataset[0]
+
+        # Check that sample contains weather data
+        assert hasattr(sample, "x_weather")
+        assert isinstance(sample.x_weather, torch.Tensor)
+
+        # Check weather tensor dimensions
+        batch_size = sample.x_static.shape[0]
+        total_timesteps = dataset.total_timesteps_window  # in_timesteps + out_timesteps
+        assert sample.x_weather.shape == (
+            batch_size,
+            total_timesteps,
+            dataset.num_weather_features,
+        )
+        assert sample.x_weather.dtype == torch.float32
+
+        # Check that weather data is populated (not all zeros)
+        assert torch.any(sample.x_weather != 0), (
+            "Weather tensor should contain non-zero values"
+        )
+
+        # Verify that all other data components are still present
+        assert hasattr(sample, "x_static")
+        assert hasattr(sample, "x_dynamic_past")
+        assert hasattr(sample, "x_dynamic_future")
+        assert hasattr(sample, "y")
+        assert hasattr(sample, "edge_index")
+
+    def test_getitem_without_weather(self, test_data_setup):
+        """Test __getitem__ method when weather is disabled."""
+        setup = test_data_setup
+
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=5,
+            out_timesteps=3,
+            future_features=["coi_puntos"],
+            node_batch_size=4,
+            node_seed="node_0",
+            include_weather=False,  # Weather disabled
+        )
+
+        # Get a sample
+        sample = dataset[0]
+
+        # Check that sample does NOT contain weather data
+        assert not hasattr(sample, "x_weather")
+
+        # Verify that all other data components are still present
+        assert hasattr(sample, "x_static")
+        assert hasattr(sample, "x_dynamic_past")
+        assert hasattr(sample, "x_dynamic_future")
+        assert hasattr(sample, "y")
+        assert hasattr(sample, "edge_index")
+
+    def test_weather_data_consistency(self, test_data_setup):
+        """Test that weather data loaded in dataset matches the generated test data."""
+        setup = test_data_setup
+
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=5,
+            out_timesteps=3,
+            future_features=["coi_puntos"],
+            node_batch_size=4,
+            node_seed="node_0",
+            weather_data_dir=setup["temp_dir"],
+            include_weather=True,
+        )
+
+        # Check that loaded weather data matches our generated data
+        for feature_name in [
+            "wind_direction",
+            "humidity",
+            "wind_speed",
+            "precipitation",
+        ]:
+            # Load the original data file
+            original_df = pd.read_parquet(setup["weather_data_paths"][feature_name])
+            dataset_df = dataset.weather_data[feature_name]
+
+            # Check that DataFrames are equivalent
+            pd.testing.assert_frame_equal(original_df, dataset_df)
+
+        # Test specific node-station mappings
+        generator = setup["generator"]
+        for i, node_id in enumerate(generator.node_ids[:5]):  # Test first 5 nodes
+            station_mapping = dataset.weather_stations[node_id]
+
+            # Verify the round-robin assignment matches our test data generation
+            expected_wind_station = f"WindStation_{i % 3}"
+            expected_humidity_station = f"HumidityStation_{i % 2}"
+            expected_speed_station = f"SpeedStation_{i % 3}"
+            expected_precip_station = f"PrecipStation_{i % 2}"
+
+            assert station_mapping["estacion_direccion_viento"] == expected_wind_station
+            assert station_mapping["estacion_humedad"] == expected_humidity_station
+            assert (
+                station_mapping["estacion_velocidad_viento"] == expected_speed_station
+            )
+            assert station_mapping["estacion_precipitacion"] == expected_precip_station
+
+    def test_weather_features_with_different_time_ranges(self, test_data_setup):
+        """Test weather features with different time windows."""
+        setup = test_data_setup
+
+        # Test with larger time window
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=10,
+            out_timesteps=5,
+            future_features=["coi_puntos"],
+            node_batch_size=3,
+            node_seed="node_0",
+            weather_data_dir=setup["temp_dir"],
+            include_weather=True,
+        )
+
+        sample = dataset[0]
+
+        # Check weather tensor dimensions match the new time window
+        batch_size = sample.x_static.shape[0]
+        total_timesteps = 15  # in_timesteps + out_timesteps
+        assert sample.x_weather.shape == (
+            batch_size,
+            total_timesteps,
+            dataset.num_weather_features,
+        )
+
+        # Check that data is populated across the full time range
+        assert torch.any(sample.x_weather[:, :10, :] != 0), (
+            "Past weather data should be non-zero"
+        )
+        assert torch.any(sample.x_weather[:, 10:, :] != 0), (
+            "Future weather data should be non-zero"
+        )
+
+    def test_weather_features_edge_cases(self, test_data_setup):
+        """Test weather features with edge cases."""
+        setup = test_data_setup
+
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=2,
+            out_timesteps=1,
+            future_features=["coi_puntos"],
+            node_batch_size=2,
+            node_seed="node_0",
+            weather_data_dir=setup["temp_dir"],
+            include_weather=True,
+        )
+
+        # Test near the end of the time series
+        last_valid_idx = len(dataset) - 1
+        if last_valid_idx > 0:
+            sample = dataset[last_valid_idx]
+
+            # Should still have proper weather tensor shape
+            batch_size = sample.x_static.shape[0]
+            total_timesteps = 3  # in_timesteps + out_timesteps
+            assert sample.x_weather.shape == (
+                batch_size,
+                total_timesteps,
+                dataset.num_weather_features,
+            )
+
+    def test_weather_loading_without_weather_dir(self, test_data_setup):
+        """Test that dataset works correctly when weather is disabled."""
+        setup = test_data_setup
+
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=5,
+            out_timesteps=3,
+            future_features=["coi_puntos"],
+            node_batch_size=4,
+            node_seed="node_0",
+            include_weather=False,  # Weather disabled
+        )
+
+        # Should not have weather components
+        assert dataset.include_weather is False
+        assert dataset.weather_stations is None
+        assert not hasattr(dataset, "weather_data") or dataset.weather_data is None
+        assert dataset.num_weather_features == 0
+
+        # Should work normally without weather
+        sample = dataset[0]
+        assert not hasattr(sample, "x_weather")
+
+        # All other functionality should work
+        assert hasattr(sample, "x_static")
+        assert hasattr(sample, "x_dynamic_past")
+        assert hasattr(sample, "x_dynamic_future")
+        assert hasattr(sample, "y")
+        assert hasattr(sample, "edge_index")
