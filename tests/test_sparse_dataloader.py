@@ -1542,3 +1542,200 @@ class TestTrafficDataset:
         # Restore original state for cleanup
         del dataset.node_to_id[invalid_node_id]
         dataset.batch_mapping[dataset.node_seed] = original_mapping
+
+    def test_imputation_logic(self, test_data_setup):
+        """Test that imputation logic correctly fills missing values for trend, speed, and regularSpeed."""
+        setup = test_data_setup
+        temp_dir = setup["temp_dir"]
+
+        # Create a deterministic irregularities dataset with known missing values
+        irregularities_path, irregularities_metadata_path = (
+            self._create_irregularities_with_missing_values(temp_dir)
+        )
+
+        # Create neighbor features parquet file with known imputation values
+        neighbor_features_path = self._create_neighbor_features_parquet(temp_dir)
+
+        # Use the existing dynamic datasets but replace one with irregularities
+        dynamic_paths = [irregularities_path] + setup["dynamic_paths"][1:]
+        metadata_paths = [irregularities_metadata_path] + setup["metadata_paths"][1:]
+
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=dynamic_paths,
+            metadata_paths=metadata_paths,
+            target_data_path=setup["target_path"],
+            in_timesteps=8,
+            out_timesteps=2,
+            future_features=[],
+            node_batch_size=5,
+            node_seed="node_0",
+            neighbor_features_path=neighbor_features_path,
+        )
+
+        # Verify that imputation feature indices were identified correctly
+        assert irregularities_path in dataset.imputation_feature_indices
+        imputation_features = dataset.imputation_feature_indices[irregularities_path]
+        assert "trend" in imputation_features
+        assert "speed" in imputation_features
+        assert "regularSpeed" in imputation_features
+
+        # Get a sample and check that imputation happened
+        sample = dataset[0]
+        x_dynamic_past = sample.x_dynamic_past
+
+        # Get the node indices for this batch
+        _, node_indices = dataset._get_time_and_node_indices(0)
+
+        # For each node in the batch, verify imputation
+        for batch_idx, global_node_idx in enumerate(node_indices):
+            node_id = dataset.id_to_node[global_node_idx]
+
+            # Get expected imputation values from neighbor features
+            expected_trend = float(
+                dataset.neighbor_features.loc[node_id, "mean_trend"]  # type: ignore
+            )
+            expected_speed = float(
+                dataset.neighbor_features.loc[node_id, "mean_regularSpeed"]  # type: ignore
+            )
+
+            # Get the feature indices in the dynamic tensor
+            trend_idx = imputation_features["trend"]
+            speed_idx = imputation_features["speed"]
+            regularSpeed_idx = imputation_features["regularSpeed"]
+
+            # Check that the imputed values match expected values
+            # Based on our test data creation, timesteps 0, 2, 4, 6 have missing values (0.0)
+            # and should be imputed
+            for timestep in [0, 2, 4, 6]:
+                trend_value = x_dynamic_past[batch_idx, timestep, trend_idx].item()
+                speed_value = x_dynamic_past[batch_idx, timestep, speed_idx].item()
+                regularSpeed_value = x_dynamic_past[
+                    batch_idx, timestep, regularSpeed_idx
+                ].item()
+
+                # These should be imputed values
+                assert abs(trend_value - expected_trend) < 1e-4, (
+                    f"Node {node_id}, timestep {timestep}: "
+                    f"Expected trend={expected_trend}, got {trend_value}"
+                )
+                assert abs(speed_value - expected_speed) < 1e-4, (
+                    f"Node {node_id}, timestep {timestep}: "
+                    f"Expected speed={expected_speed}, got {speed_value}"
+                )
+                assert abs(regularSpeed_value - expected_speed) < 1e-4, (
+                    f"Node {node_id}, timestep {timestep}: "
+                    f"Expected regularSpeed={expected_speed}, got {regularSpeed_value}"
+                )
+
+            # Check that timesteps with actual data are NOT overwritten
+            # Timesteps 1, 3, 5, 7 have actual values and should remain unchanged
+            for timestep in [1, 3, 5, 7]:
+                trend_value = x_dynamic_past[batch_idx, timestep, trend_idx].item()
+                speed_value = x_dynamic_past[batch_idx, timestep, speed_idx].item()
+                regularSpeed_value = x_dynamic_past[
+                    batch_idx, timestep, regularSpeed_idx
+                ].item()
+
+                # These should be the actual values (not imputed)
+                # Based on our test data: value = time_idx * 100 + node_idx * 10 + feature_idx
+                expected_actual_trend = (
+                    timestep * 100 + global_node_idx * 10 + trend_idx
+                )
+                expected_actual_speed = (
+                    timestep * 100 + global_node_idx * 10 + speed_idx
+                )
+                expected_actual_regularSpeed = (
+                    timestep * 100 + global_node_idx * 10 + regularSpeed_idx
+                )
+
+                assert abs(trend_value - expected_actual_trend) < 1e-4, (
+                    f"Node {node_id}, timestep {timestep}: "
+                    f"Actual trend value should not be overwritten. "
+                    f"Expected {expected_actual_trend}, got {trend_value}"
+                )
+                assert abs(speed_value - expected_actual_speed) < 1e-4, (
+                    f"Node {node_id}, timestep {timestep}: "
+                    f"Actual speed value should not be overwritten. "
+                    f"Expected {expected_actual_speed}, got {speed_value}"
+                )
+                assert abs(regularSpeed_value - expected_actual_regularSpeed) < 1e-4, (
+                    f"Node {node_id}, timestep {timestep}: "
+                    f"Actual regularSpeed value should not be overwritten. "
+                    f"Expected {expected_actual_regularSpeed}, got {regularSpeed_value}"
+                )
+
+    def _create_irregularities_with_missing_values(
+        self, temp_dir: str
+    ) -> tuple[str, str]:
+        """Create irregularities dataset with missing values for imputation testing."""
+        feature_names = ["trend", "speed", "regularSpeed"]
+        data_list = []
+
+        # Create data with deliberate missing values (0.0) in even timesteps
+        # NOTE: The HDF5 format stores [node_idx, time_idx, feature_idx, value]
+        # but the TestDataGenerator creates time_idx_map that maps timestamps to indices
+        for time_idx in range(50):  # Use all available timesteps
+            for node_idx in range(10):
+                node_id = f"node_{node_idx}"
+                for feature_idx, feature_name in enumerate(feature_names):
+                    # Even timesteps have missing values (0.0)
+                    if time_idx % 2 == 0:
+                        value = 0.0
+                    else:
+                        # Odd timesteps have actual values
+                        value = float(time_idx * 100 + node_idx * 10 + feature_idx)
+
+                    # Format: [node_idx, time_idx, feature_idx, value]
+                    data_list.append([node_idx, time_idx, feature_idx, value])
+
+        data_array = np.array(data_list)
+        if len(data_array) > 0:
+            # Sort by time_idx (column 1) as expected by the dataloader
+            data_array = data_array[data_array[:, 1].argsort()]
+
+        # Create HDF5 file
+        h5_path = os.path.join(temp_dir, "irregularities_dataset.h5")
+        with h5py.File(h5_path, "w") as f:
+            f.create_dataset("data", data=data_array, dtype=np.float32)
+
+        # Create metadata
+        generator = TestDataGenerator(num_nodes=10, num_timesteps=50)
+        feature_idx_map = {name: i for i, name in enumerate(feature_names)}
+        metadata = {
+            "node_idx_map": generator.node_idx_map,
+            "time_idx_map": generator.time_idx_map,
+            "feature_idx_map": feature_idx_map,
+        }
+
+        metadata_path = os.path.join(temp_dir, "irregularities_dataset_metadata.pkl")
+        with open(metadata_path, "wb") as f:
+            pickle.dump(metadata, f)
+
+        return h5_path, metadata_path
+
+    def _create_neighbor_features_parquet(self, temp_dir: str) -> str:
+        """Create neighbor features parquet file for imputation testing."""
+        # Create known imputation values for each node
+        neighbor_data = []
+        for node_idx in range(10):
+            node_id = f"node_{node_idx}"
+            # Use deterministic values for testing
+            mean_trend = -0.5 + node_idx * 0.1  # e.g., -0.5, -0.4, -0.3, ...
+            mean_regularSpeed = 20.0 + node_idx * 2.0  # e.g., 20, 22, 24, ...
+            neighbor_data.append(
+                {
+                    "node_id": node_id,
+                    "mean_trend": mean_trend,
+                    "mean_regularSpeed": mean_regularSpeed,
+                }
+            )
+
+        df = pd.DataFrame(neighbor_data)
+        df = df.set_index("node_id")
+
+        neighbor_path = os.path.join(temp_dir, "neighbor_features.parquet")
+        df.to_parquet(neighbor_path)
+
+        return neighbor_path
