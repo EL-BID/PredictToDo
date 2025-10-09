@@ -33,6 +33,7 @@ class TrafficDataset(Dataset):
         node_seed: str = "0_FT.5",
         weather_data_dir: str | None = None,
         include_weather: bool = False,
+        neighbor_features_path: str | None = None,
     ):
         """
         Args:
@@ -47,6 +48,7 @@ class TrafficDataset(Dataset):
             node_seed (str): The node ID to use as the seed for the first batch.
             weather_data_dir (str, optional): Directory containing processed weather data files.
             include_weather (bool): Whether to include weather features in the dataset.
+            neighbor_features_path (str, optional): Path to parquet file with neighbor-aggregated features for imputation.
         """
         super().__init__()
         self.node_seed = node_seed
@@ -103,6 +105,22 @@ class TrafficDataset(Dataset):
         if self.include_weather and self.weather_data_dir:
             self.weather_stations, self.weather_data = self._load_weather_data()
             self.num_weather_features = len(self.weather_features)
+
+        # Load neighbor features for imputation of special features
+        self.neighbor_features = None
+        self.imputation_features = ["trend", "speed", "regularSpeed"]
+        self.imputation_mapping = {
+            "trend": "mean_trend",
+            "speed": "mean_regularSpeed",
+            "regularSpeed": "mean_regularSpeed",
+        }
+        self.imputation_feature_indices: dict[str, dict[str, int]] = {}
+        if neighbor_features_path:
+            self.neighbor_features = self._load_neighbor_features(
+                neighbor_features_path
+            )
+            # Identify which HDF5 files contain the imputation features
+            self._identify_imputation_features(metadata_paths)
 
         # Open dynamic data files and get metadata
         self.total_timesteps_in_data = 0
@@ -283,6 +301,44 @@ class TrafficDataset(Dataset):
 
         return weather_stations, weather_data
 
+    def _load_neighbor_features(self, file_path: str) -> pd.DataFrame:
+        """
+        Load neighbor-aggregated features for imputation.
+
+        Args:
+            file_path (str): Path to the parquet file with neighbor features.
+
+        Returns:
+            pd.DataFrame: DataFrame with node IDs as index and aggregated features as columns.
+        """
+        neighbor_features = pd.read_parquet(file_path)
+        # Ensure the index is set to node IDs if not already
+        if neighbor_features.index.name != "node_id":
+            # Assume first column or index is the node ID
+            pass
+        return neighbor_features
+
+    def _identify_imputation_features(self, metadata_paths: list[str]) -> None:
+        """
+        Identify which HDF5 files and feature indices correspond to the imputation features.
+
+        Args:
+            metadata_paths (list[str]): List of paths to metadata files.
+        """
+        for dataset_file, metadata_file in zip(self.dynamic_data_paths, metadata_paths):
+            with open(metadata_file, "rb") as f:
+                metadata = pickle.load(f)
+
+            # Check which imputation features are in this file
+            features_in_file = {}
+            for feature_name in self.imputation_features:
+                if feature_name in metadata["feature_idx_map"]:
+                    feature_idx = metadata["feature_idx_map"][feature_name]
+                    features_in_file[feature_name] = feature_idx
+
+            if features_in_file:
+                self.imputation_feature_indices[dataset_file] = features_in_file
+
     def _precompute_time_indices(
         self,
     ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
@@ -419,6 +475,43 @@ class TrafficDataset(Dataset):
                 x_dynamic_past[
                     batch_node_indices, batch_time_idx, batch_feature_idx
                 ] = torch.from_numpy(batch_values).float()
+
+        # Impute missing values for special features using neighbor aggregates
+        if (
+            self.neighbor_features is not None
+            and file_path in self.imputation_feature_indices
+        ):
+            features_to_impute = self.imputation_feature_indices[file_path]
+
+            for feature_name, feature_idx_in_file in features_to_impute.items():
+                # Get the imputation column name from the mapping
+                imputation_col = self.imputation_mapping[feature_name]
+
+                # Calculate the global feature index (with offset)
+                global_feature_idx = feature_idx_in_file + feature_offset_past
+
+                # For each node in the batch, impute missing values
+                for global_node_idx, batch_idx in node_idx_to_batch_idx.items():
+                    # Get the node ID from the global node index
+                    node_id = self.id_to_node[global_node_idx]
+
+                    # Check if this node has neighbor features
+                    if node_id not in self.neighbor_features.index:
+                        continue
+
+                    # Get the imputation value for this node
+                    imputation_value = float(
+                        self.neighbor_features.loc[node_id, imputation_col]  # type: ignore
+                    )
+
+                    # Find timesteps where this feature is missing (zero) for this node
+                    # We check the entire time window for this node and feature
+                    missing_mask = x_dynamic_past[batch_idx, :, global_feature_idx] == 0
+
+                    # Impute the missing values
+                    x_dynamic_past[batch_idx, missing_mask, global_feature_idx] = (
+                        imputation_value
+                    )
 
         return x_dynamic_past
 
@@ -797,6 +890,7 @@ if __name__ == "__main__":
         node_batch_size=500,
         weather_data_dir=f"{processed_data_dir}/sparse_datasets",
         include_weather=True,
+        neighbor_features_path=f"{processed_data_dir}/neighbor_features.parquet",
     )
     print("Dataset initialized.")
     print(f"Total samples in dataset: {len(traffic_dataset)}")
