@@ -108,12 +108,12 @@ class TrafficDataset(Dataset):
 
         # Load neighbor features for imputation of special features
         self.neighbor_features = None
-        self.imputation_features = ["trend", "speed", "regularSpeed"]
         self.imputation_mapping = {
             "trend": "mean_trend",
             "speed": "mean_regularSpeed",
             "regularSpeed": "mean_regularSpeed",
         }
+        self.imputation_features = list(self.imputation_mapping.keys())
         self.imputation_feature_indices: dict[str, dict[str, int]] = {}
         if neighbor_features_path:
             self.neighbor_features = self._load_neighbor_features(
