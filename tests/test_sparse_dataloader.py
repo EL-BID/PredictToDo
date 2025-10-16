@@ -1292,7 +1292,7 @@ class TestTrafficDataset:
 
         # Check weather tensor dimensions
         batch_size = sample.x_static.shape[0]
-        total_timesteps = dataset.total_timesteps_window  # in_timesteps + out_timesteps
+        total_timesteps = dataset.in_timesteps  # in_timesteps
         assert sample.x_weather.shape == (
             batch_size,
             total_timesteps,
@@ -1419,7 +1419,7 @@ class TestTrafficDataset:
 
         # Check weather tensor dimensions match the new time window
         batch_size = sample.x_static.shape[0]
-        total_timesteps = 15  # in_timesteps + out_timesteps
+        total_timesteps = 10  # in_timesteps
         assert sample.x_weather.shape == (
             batch_size,
             total_timesteps,
@@ -1429,9 +1429,6 @@ class TestTrafficDataset:
         # Check that data is populated across the full time range
         assert torch.any(sample.x_weather[:, :10, :] != 0), (
             "Past weather data should be non-zero"
-        )
-        assert torch.any(sample.x_weather[:, 10:, :] != 0), (
-            "Future weather data should be non-zero"
         )
 
     def test_weather_features_edge_cases(self, test_data_setup):
@@ -1460,7 +1457,7 @@ class TestTrafficDataset:
 
             # Should still have proper weather tensor shape
             batch_size = sample.x_static.shape[0]
-            total_timesteps = 3  # in_timesteps + out_timesteps
+            total_timesteps = 2  # in_timesteps
             assert sample.x_weather.shape == (
                 batch_size,
                 total_timesteps,
