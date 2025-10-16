@@ -114,6 +114,9 @@ class TrafficDataset(Dataset):
             "trend": "mean_trend",
             "speed": "mean_regularSpeed",
             "regularSpeed": "mean_regularSpeed",
+            "vel_min": "free_flow_speed_mean",
+            "vel_mean": "free_flow_speed_mean",
+            "vel_max": "free_flow_speed_mean",
         }
         self.imputation_features = list(self.imputation_mapping.keys())
         self.imputation_feature_indices: dict[str, dict[str, int]] = {}
