@@ -449,6 +449,15 @@ if __name__ == "__main__":
 
     static_df = static_node_data.join(road_state_df, how="left")
     static_df.index.name = "road_id"
+    # Fill NaN values in the static dataframe since road_state_df has missing nodes
+    static_df["numeric_road_state"] = static_df["numeric_road_state"].fillna(0)
+    feature_medians = static_df[
+        ["SUPERFEST", "INDEST", "LOCEST", "KMCAINDEST"]
+    ].median()
+    static_df[["SUPERFEST", "INDEST", "LOCEST", "KMCAINDEST"]] = static_df[
+        ["SUPERFEST", "INDEST", "LOCEST", "KMCAINDEST"]
+    ].fillna(feature_medians)
+
     del base_graph, road_state_df, static_node_data  # Clean up memory
 
     dataset_generator.static_dataframe_to_coo(
