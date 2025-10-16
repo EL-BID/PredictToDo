@@ -44,8 +44,17 @@ def pad_collate(batch):
     has_single = hasattr(batch[0], "x_dynamic")
 
     if has_past and has_future:
-        out["x_dynamic_past"]   = torch.stack([d.x_dynamic_past   for d in batch], dim=0)  # (B, N, Tin, F_dyn)
-        out["x_dynamic_future"] = torch.stack([d.x_dynamic_future for d in batch], dim=0)  # (B, N, Tout, F_future)
+        x_dynamic_past = torch.stack([d.x_dynamic_past for d in batch], dim=0)   # (B, N, Tin, F_dyn)
+        x_dynamic_future = torch.stack([d.x_dynamic_future for d in batch], dim=0)  # (B, N, Tout, F_future)
+
+        if hasattr(batch[0], "x_weather"):
+            x_weather = torch.stack([d.x_weather for d in batch], dim=0)  # (B, N, Tin, F_weather)
+            out["x_dynamic_past"] = torch.cat([x_dynamic_past, x_weather], dim=-1)
+            out["x_weather"] = x_weather
+        else:
+            out["x_dynamic_past"] = x_dynamic_past
+
+        out["x_dynamic_future"] = x_dynamic_future
     elif has_single:
         out["x_dynamic"] = torch.stack([d.x_dynamic for d in batch], dim=0)  # (B, N, Tin, F_dyn)
     else:

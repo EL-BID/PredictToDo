@@ -451,15 +451,24 @@ class TrafficDataset(Dataset):
                 batch_feature_idx = feature_idx[batch_mask]
                 batch_values = values[batch_mask]
 
-                # Convert global node indices to batch indices
-                batch_node_indices = [
-                    node_idx_to_batch_idx[idx] for idx in batch_node_idx
-                ]
+                # Ensure time indices fall inside the current window to avoid IndexError
+                window_length = input_end_time - input_start_time + 1
+                time_mask = (batch_time_idx >= 0) & (batch_time_idx < window_length)
+                if not np.all(time_mask):
+                    batch_node_idx = batch_node_idx[time_mask]
+                    batch_time_idx = batch_time_idx[time_mask]
+                    batch_feature_idx = batch_feature_idx[time_mask]
+                    batch_values = batch_values[time_mask]
+                if batch_time_idx.size > 0:
+                    # Convert global node indices to batch indices
+                    batch_node_indices = [
+                        node_idx_to_batch_idx[idx] for idx in batch_node_idx
+                    ]
 
-                # Populate the dense tensor for the window
-                x_dynamic_past[
-                    batch_node_indices, batch_time_idx, batch_feature_idx
-                ] = torch.from_numpy(batch_values).float()
+                    # Populate the dense tensor for the window
+                    x_dynamic_past[
+                        batch_node_indices, batch_time_idx, batch_feature_idx
+                    ] = torch.from_numpy(batch_values).float()
 
         # Impute missing values for special features using neighbor aggregates
         if (
@@ -592,7 +601,7 @@ class TrafficDataset(Dataset):
         Returns:
             torch.Tensor: The populated tensor with weather features.
         """
-        # Ensure time indices are integers
+        # Ensure time indices are integers (past window)
         time_start_int = int(np.asarray(time_start).item())
         time_end_int = int(np.asarray(time_end).item())
 
@@ -660,7 +669,7 @@ class TrafficDataset(Dataset):
                 value = values[i]
 
                 time_offset = int(time_idx) - time_start_int
-                if 0 <= time_offset < self.total_timesteps_window:
+                if 0 <= time_offset < self.in_timesteps:
                     # Collect indices for all nodes that use this station
                     if station_name in station_to_nodes:
                         for node_id in station_to_nodes[station_name]:
@@ -704,10 +713,10 @@ class TrafficDataset(Dataset):
             (batch_size, self.out_timesteps, self.num_dynamic_future_features)
         )
 
-        # Weather features tensor (for both past and future since weather is always available)
+        # Weather features tensor (only past timesteps)
         x_weather = (
             torch.zeros(
-                (batch_size, self.total_timesteps_window, self.num_weather_features)
+                (batch_size, self.in_timesteps, self.num_weather_features)
             )
             if self.include_weather
             else None
@@ -796,8 +805,8 @@ class TrafficDataset(Dataset):
             # time_idx should already be an int from _get_time_and_node_indices
             x_weather = self._get_weather_features(
                 x_weather=x_weather,
-                time_start=time_idx,
-                time_end=time_idx + self.total_timesteps_window - 1,
+                time_start=input_start_time,
+                time_end=input_end_time,
                 node_indices=node_indices,
             )
 
