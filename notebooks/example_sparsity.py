@@ -17,14 +17,19 @@
 # cd ..
 
 # %%
-from torch_geometric.loader import DataLoader
-
 from src.sparse_dataloader import TrafficDataset
+from torch_geometric.loader import DataLoader
 
 # %load_ext autoreload
 # %autoreload 2
 
 # %load_ext line_profiler
+
+# Reload to get the optimized version
+import importlib
+import src.sparse_dataloader
+importlib.reload(src.sparse_dataloader)
+from src.sparse_dataloader import TrafficDataset
 
 # %%
 processed_data_dir = "data/datos_procesados"
@@ -46,8 +51,8 @@ metadata_filenames = [
     f"{sparse_data_dir}/incidents_dataset_metadata.pkl",
 ]
 target_data_filename = f"{sparse_data_dir}/jams_dataset.h5"
-in_timesteps = 6
-out_timesteps = 3
+in_timesteps = 150
+out_timesteps = 50
 
 traffic_dataset = TrafficDataset(
     graph_path=graph_filename,
@@ -57,24 +62,24 @@ traffic_dataset = TrafficDataset(
     target_data_path=target_data_filename,
     in_timesteps=in_timesteps,
     out_timesteps=out_timesteps,
-    future_features=[
+    future_features = [
         "coi_puntos",
         "coi_tramo",
         "AGLOMERACION",
         "EMERGENCIA",
         "MANIFESTACION",
     ],
-    node_batch_size=1024,
+    node_batch_size=500,
 )
 
 # %%
-batch_size = 3
+batch_size = 16
 
 traffic_dataloader = DataLoader(
     dataset=traffic_dataset,
-    batch_size=batch_size,  # This now batches the Data objects
+    batch_size=batch_size, # This now batches the Data objects
     shuffle=True,
-    num_workers=0,
+    num_workers=0 
 )
 
 # %%
@@ -82,34 +87,54 @@ print(f"\nDataset size: {len(traffic_dataset)} samples")
 print(f"Number of batches: {len(traffic_dataloader)}")
 print("-" * 40)
 print("-" * 40)
-# Get a single batch
-sample_batch = next(iter(traffic_dataloader))
-
-# Inspect the batch
-print(f"Edge index shape (batch_size, 2, num_edges):")
-print(f"{sample_batch['edge_index'].shape}")
-print()
-print(f"Static features shape (batch_size, num_nodes, num_static_features):")
-print(f"{sample_batch['x_static'].shape}")
-print()
-print(
-    f"Past dynamic features shape (batch_size, num_nodes, in_timesteps, num_dynamic_features):"
-)
-print(f"{sample_batch['x_dynamic_past'].shape}")
-print()
-print(
-    f"Future dynamic features shape (batch_size, num_nodes, out_timesteps, num_dynamic_features):"
-)
-print(f"{sample_batch['x_dynamic_future'].shape}")
-print()
-print(f"Target shape (batch_size, num_nodes, out_timesteps):")
-print(f"{sample_batch['y'].shape}")
 
 # %%
-# %lprun -f TrafficDataset.__getitem__ next(iter(traffic_dataloader))
+# print(f"\nDataset size: {len(traffic_dataset)} samples")
+# print(f"Number of batches: {len(traffic_dataloader)}")
+# print("-" * 40)
+# print("-" * 40)
+# # Get a single batch
+# sample_batch = next(iter(traffic_dataloader))
+
+# # Inspect the batch
+# print(f"Edge index shape (batch_size, 2, num_edges):")
+# print(f"{sample_batch['edge_index'].shape}")
+# print()
+# print(f"Static features shape (batch_size, num_nodes, num_static_features):")
+# print(f"{sample_batch['x_static'].shape}")
+# print()
+# print(f"Past dynamic features shape (batch_size, num_nodes, in_timesteps, num_dynamic_features):")
+# print(f"{sample_batch['x_dynamic_past'].shape}")
+# print()
+# print(f"Future dynamic features shape (batch_size, num_nodes, out_timesteps, num_dynamic_features):")
+# print(f"{sample_batch['x_dynamic_future'].shape}")
+# print()
+# print(f"Target shape (batch_size, num_nodes, out_timesteps):")
+# print(f"{sample_batch['y'].shape}")
+
+# %%
+# %lprun -f TrafficDataset.__getitem__ -u 1e-06 [next(iter(traffic_dataloader)) for _ in range(1)]
+
+# %%
+import time
+num_epochs = 3  # Reduced for testing
+
+for epoch in range(num_epochs):
+    epoch_start = time.perf_counter()
+    total_loss = 0.0
+    prev_end = epoch_start
+
+    for step, batch in enumerate(traffic_dataloader):
+        iter_start = time.perf_counter()
+        data_wait_s = iter_start - prev_end
+        print(f"Batch {step}: dataloader wait = {data_wait_s*1000:.1f} ms")
+        prev_end = time.perf_counter()
+        if step >= 3:  # Only test first few batches
+            break
 
 # %% [markdown]
 # ## Compare sorted search vs. naive approach
+#
 
 # %%
 import h5py
@@ -123,15 +148,8 @@ file_indices = np.zeros((traffic_dataset.total_timesteps_in_data - 1, 2), dtype=
 with h5py.File(file_path, "r") as f:
     # Reading the entire time_idx column can be slow
     time_column = f["data"][:, 1]
-    file_indices[:, 0] = np.searchsorted(
-        time_column, np.arange(traffic_dataset.total_timesteps_in_data - 1), side="left"
-    )
-    file_indices[:, 1] = np.searchsorted(
-        time_column,
-        np.arange(traffic_dataset.total_timesteps_in_data - 1),
-        side="right",
-    )
-
+    file_indices[:, 0] = np.searchsorted(time_column, np.arange(traffic_dataset.total_timesteps_in_data - 1), side='left')
+    file_indices[:, 1] = np.searchsorted(time_column, np.arange(traffic_dataset.total_timesteps_in_data - 1), side='right')
 
 def demo_no_sorting(idx):
     input_start_time = idx
@@ -158,13 +176,10 @@ def demo_sorted(idx):
         relevant_data = f["data"][start_index:end_index]
     return relevant_data
 
-
 relevant_data_no_sorting = demo_no_sorting(idx)
 relevant_data_sorted = demo_sorted(idx)
 
-assert (relevant_data_sorted == relevant_data_no_sorting).mean() == 1.0, (
-    "Data mismatch between sorted and unsorted methods"
-)
+assert (relevant_data_sorted == relevant_data_no_sorting).mean() == 1.0, "Data mismatch between sorted and unsorted methods"
 
 # %%
 # %lprun -f demo_no_sorting demo_no_sorting(idx)
@@ -177,6 +192,7 @@ print("Improvement of", round(100 - (0.000815 / 2.35875) * 100, 2), "%")
 
 # %% [markdown]
 # ## How does sparsity work?
+#
 
 # %%
 import pandas as pd
