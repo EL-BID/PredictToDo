@@ -604,6 +604,56 @@ if __name__ == "__main__":
 
     del stations_df, wind_direction_df, humidity_df, wind_speed_df, precipitation_df
 
+    jams_filenames = [
+        f"{processed_data_dir}/jams_procesados/" + f
+        for f in os.listdir(f"{processed_data_dir}/jams_procesados/")
+        if f.endswith(".parquet")
+    ]
+
+    # Process jam features in batches to avoid memory issues
+    jam_feature_groups = [
+        {
+            "name": "velocity",
+            "columns": ["road_id", "timeframe", "vel_min", "vel_mean", "vel_max"],
+            "output": f"{processed_data_dir}/sparse_datasets/jam_velocity_dataset.h5",
+        },
+        {
+            "name": "delay",
+            "columns": ["road_id", "timeframe", "delay_min", "delay_sum", "delay_max"],
+            "output": f"{processed_data_dir}/sparse_datasets/jam_delay_dataset.h5",
+        },
+        {
+            "name": "level_and_count",
+            "columns": [
+                "road_id",
+                "timeframe",
+                "level_min",
+                "level_mean",
+                "level_max",
+                "count_jams",
+            ],
+            "output": f"{processed_data_dir}/sparse_datasets/jam_level_count_dataset.h5",
+        },
+    ]
+
+    for group in jam_feature_groups:
+        print(f"\nProcessing jam {group['name']} features...")
+        jams_df = pd.concat(
+            [pd.read_parquet(f, columns=group["columns"]) for f in jams_filenames],
+            ignore_index=False,
+        )
+
+        dataset_generator.temporal_dataframe_to_coo(
+            jams_df,
+            output_path=group["output"],
+            has_index=False,
+            node_col="road_id",
+            timeframe_col="timeframe",
+            return_df=False,
+        )
+        del jams_df  # Clean up memory
+        print(f"Completed {group['name']} features")
+
     print("---------------------------------------------------")
     print("----- Sparse datasets generated successfully. -----")
     print("---------------------------------------------------")
