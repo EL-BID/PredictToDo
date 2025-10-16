@@ -34,6 +34,7 @@ class TrafficDataset(Dataset):
         weather_data_dir: str | None = None,
         include_weather: bool = False,
         neighbor_features_path: str | None = None,
+        free_flow_estimates_path: str | None = None,
     ):
         """
         Args:
@@ -49,6 +50,7 @@ class TrafficDataset(Dataset):
             weather_data_dir (str, optional): Directory containing processed weather data files.
             include_weather (bool): Whether to include weather features in the dataset.
             neighbor_features_path (str, optional): Path to parquet file with neighbor-aggregated features for imputation.
+            free_flow_estimates_path (str, optional): Path to parquet file with free-flow speed estimates.
         """
         super().__init__()
         self.node_seed = node_seed
@@ -116,9 +118,7 @@ class TrafficDataset(Dataset):
         self.imputation_features = list(self.imputation_mapping.keys())
         self.imputation_feature_indices: dict[str, dict[str, int]] = {}
         if neighbor_features_path:
-            self.neighbor_features = self._load_neighbor_features(
-                neighbor_features_path
-            )
+            self.neighbor_features = pd.read_parquet(neighbor_features_path)
             # Identify which HDF5 files contain the imputation features
             self._identify_imputation_features(metadata_paths)
 
@@ -300,23 +300,6 @@ class TrafficDataset(Dataset):
             weather_data[feature] = pd.read_parquet(weather_path)
 
         return weather_stations, weather_data
-
-    def _load_neighbor_features(self, file_path: str) -> pd.DataFrame:
-        """
-        Load neighbor-aggregated features for imputation.
-
-        Args:
-            file_path (str): Path to the parquet file with neighbor features.
-
-        Returns:
-            pd.DataFrame: DataFrame with node IDs as index and aggregated features as columns.
-        """
-        neighbor_features = pd.read_parquet(file_path)
-        # Ensure the index is set to node IDs if not already
-        if neighbor_features.index.name != "node_id":
-            # Assume first column or index is the node ID
-            pass
-        return neighbor_features
 
     def _identify_imputation_features(self, metadata_paths: list[str]) -> None:
         """
