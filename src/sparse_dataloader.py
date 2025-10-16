@@ -844,6 +844,9 @@ if __name__ == "__main__":
         f"{sparse_data_dir}/irregularities_dataset.h5",
         f"{sparse_data_dir}/events_dataset.h5",
         f"{sparse_data_dir}/incidents_dataset.h5",
+        f"{sparse_data_dir}/jam_velocity_dataset.h5",
+        f"{sparse_data_dir}/jam_level_count_dataset.h5",
+        f"{sparse_data_dir}/jam_delay_dataset.h5",
     ]
     metadata_filenames = [
         f"{sparse_data_dir}/coi_points_dataset_metadata.pkl",
@@ -851,6 +854,9 @@ if __name__ == "__main__":
         f"{sparse_data_dir}/irregularities_dataset_metadata.pkl",
         f"{sparse_data_dir}/events_dataset_metadata.pkl",
         f"{sparse_data_dir}/incidents_dataset_metadata.pkl",
+        f"{sparse_data_dir}/jam_velocity_dataset_metadata.pkl",
+        f"{sparse_data_dir}/jam_level_count_dataset_metadata.pkl",
+        f"{sparse_data_dir}/jam_delay_dataset_metadata.pkl",
     ]
     target_data_filename = f"{sparse_data_dir}/jams_dataset.h5"
     in_timesteps = 150
@@ -906,3 +912,8 @@ if __name__ == "__main__":
         prev_end = time.perf_counter()
         if step >= 10:
             break
+        assert batch.x_static is not None
+        assert batch.x_dynamic_past is not None
+        assert batch.x_dynamic_future is not None
+        if traffic_dataset.include_weather:
+            assert batch.x_weather is not None
