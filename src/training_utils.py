@@ -129,8 +129,8 @@ class EpochUniquePicker:
 
     _rng: np.random.Generator = field(init=False, repr=False)
     _seen: set = field(default_factory=set, init=False, repr=False)
-    _top_perm: np.ndarray = field(default=None, init=False, repr=False)
-    _rest_perm: np.ndarray = field(default=None, init=False, repr=False)
+    _top_perm: np.ndarray | None = field(default=None, init=False, repr=False)
+    _rest_perm: np.ndarray | None = field(default=None, init=False, repr=False)
     _i_top: int = field(default=0, init=False, repr=False)
     _i_rest: int = field(default=0, init=False, repr=False)
 
@@ -148,13 +148,13 @@ class EpochUniquePicker:
         self._i_rest = 0
 
     def _draw_from(self, which: str):
-        if which == "top":
+        if which == "top" and self._top_perm is not None:
             if self._i_top < len(self._top_perm):
                 v = self._top_perm[self._i_top]
                 self._i_top += 1
                 return v
         else:
-            if self._i_rest < len(self._rest_perm):
+            if self._rest_perm is not None and self._i_rest < len(self._rest_perm):
                 v = self._rest_perm[self._i_rest]
                 self._i_rest += 1
                 return v
@@ -173,6 +173,8 @@ class EpochUniquePicker:
             # fallback: allow repeats using base picker (with replacement)
             return self.base.pick()
 
+        if self.key_fn is None:
+            raise ValueError("key_fn should have been set in __post_init__")
         key = self.key_fn(node)
         if key in self._seen:
             # try the other pool once
@@ -189,4 +191,6 @@ class EpochUniquePicker:
         return node  # <-- return the literal as-is
 
     def remaining(self):
+        if self._top_perm is None or self._rest_perm is None:
+            raise ValueError("Call start_epoch() before remaining()")
         return (len(self._top_perm) - self._i_top, len(self._rest_perm) - self._i_rest)
