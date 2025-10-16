@@ -455,10 +455,11 @@ if __name__ == "__main__":
         for f in os.listdir(f"{processed_data_dir}/jams_procesados/")
         if f.endswith(".parquet")
     ]
-    jams_df = pd.concat(
+    jams_raw_df = pd.concat(
         [pd.read_parquet(f) for f in jams_filenames],
         ignore_index=False,
-    ).fillna(0)[["road_id", "timeframe", "level_mean"]]
+    ).fillna(0)
+    jams_df = jams_raw_df[["road_id", "timeframe", "level_mean"]].copy()
 
     dataset_generator.temporal_dataframe_to_coo(
         jams_df.rename(columns={"level_mean": "mean_jam_level"}),
@@ -469,6 +470,44 @@ if __name__ == "__main__":
         return_df=False,
     )
     del jams_df  # Clean up memory
+
+    jams_variables_columns = [
+        "vel_min",
+        "vel_mean",
+        "vel_max",
+        "level_min",
+        "level_mean",
+        "level_max",
+        "delay_min",
+        "delay_sum",
+        "delay_max",
+        "count_jams",
+    ]
+    jams_available_columns = [
+        col for col in jams_variables_columns if col in jams_raw_df.columns
+    ]
+    jams_variables_df = jams_raw_df[
+        ["road_id", "timeframe"] + jams_available_columns
+    ].copy()
+
+    if len(jams_available_columns) == 0:
+        raise ValueError(
+            "No se encontraron columnas de variables de jams para crear el dataset "
+            "'jams_variables_dataset.h5'. Verifique el esquema de los archivos en "
+            f"{processed_data_dir}/jams_procesados/."
+        )
+
+    dataset_generator.temporal_dataframe_to_coo(
+        jams_variables_df,
+        output_path=f"{processed_data_dir}/sparse_datasets/jams_variables_dataset.h5",
+        has_index=False,
+        node_col="road_id",
+        timeframe_col="timeframe",
+        return_df=False,
+    )
+
+    del jams_variables_df
+    del jams_raw_df
 
     print("---------------------------------------------------")
     print("----- Sparse datasets generated successfully. -----")
