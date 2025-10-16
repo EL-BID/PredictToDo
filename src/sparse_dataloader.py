@@ -17,6 +17,19 @@ class TrafficDataset(Dataset):
     Custom Dataset class for the traffic forecasting problem with memory-efficient
     lazy loading. It loads a graph and static node features into memory, but
     fetches dynamic features from HDF5 files on-the-fly for each sample.
+
+    IMPORTANT - Node Batching Strategy:
+    This dataset uses a unique batching approach where:
+    - Each sample contains a neighborhood of nodes (via BFS from a seed node)
+    - The seed node is reassigned externally during training via `reasign_seed()`
+    - `__len__()` returns time windows for the CURRENT seed only, not total samples
+    - Use `total_training_samples` property for the full epoch workload
+
+    Typical usage:
+        1. Initialize dataset with an initial seed node
+        2. Create DataLoader (batches over time windows for current seed)
+        3. In training loop: after each batch, call `dataset.reasign_seed(new_seed)`
+        4. The EpochUniquePicker (or similar) manages which seeds to visit
     """
 
     def __init__(
@@ -76,7 +89,9 @@ class TrafficDataset(Dataset):
         self.batch_mapping = self.get_first_n_reachable()
         self.static_features = self._load_static_features(static_data_path)
         self.num_nodes = self.static_features.shape[0]
-        # Number of different seed nodes needed to cover all nodes (for external training logic)
+        # Number of different seed nodes needed to cover all nodes
+        # This is used for external training logic and for calculating total_training_samples
+        # Note: len(dataset) returns time windows per seed, NOT total samples per epoch
         self.total_possible_node_batches = math.ceil(
             self.num_nodes / self.node_batch_size
         )
@@ -366,10 +381,16 @@ class TrafficDataset(Dataset):
 
     def __len__(self):
         """
-        Returns the total number of samples for the current node seed.
-        Since the dataset only provides samples for the current node_seed's
-        neighborhood, the length is just the number of time windows.
-        Node batching is handled externally by reassigning the seed.
+        Returns the number of time windows available for the CURRENT seed node only.
+
+        IMPORTANT: This does NOT represent the total training samples per epoch!
+        Node batching is handled externally by reassigning the seed via `reasign_seed()`.
+
+        Total training samples per epoch = len(self) × total_possible_node_batches
+        Use the `total_training_samples` property to get the full count.
+
+        Returns:
+            int: Number of time windows for the current seed node's neighborhood.
         """
         if self.total_timesteps_in_data < self.total_timesteps_window:
             return 0
@@ -377,6 +398,18 @@ class TrafficDataset(Dataset):
             self.total_timesteps_in_data - self.total_timesteps_window + 1
         )
         return num_time_windows
+
+    @property
+    def total_training_samples(self) -> int:
+        """
+        Returns the total number of training samples across all node batches and time windows.
+
+        This represents the complete workload for one full epoch when all nodes are covered.
+
+        Returns:
+            int: Total samples = (number of time windows) × (number of node batches)
+        """
+        return len(self) * self.total_possible_node_batches
 
     def _get_time_and_node_indices(self, idx) -> tuple[int, list[int]]:
         """
