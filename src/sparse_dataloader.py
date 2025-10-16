@@ -34,7 +34,6 @@ class TrafficDataset(Dataset):
         weather_data_dir: str | None = None,
         include_weather: bool = False,
         neighbor_features_path: str | None = None,
-        free_flow_estimates_path: str | None = None,
     ):
         """
         Args:
