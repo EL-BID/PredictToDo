@@ -706,9 +706,7 @@ class TrafficDataset(Dataset):
 
         # Weather features tensor (for both past and future since weather is always available)
         x_weather = (
-            torch.zeros(
-                (batch_size, self.total_timesteps_window, self.num_weather_features)
-            )
+            torch.zeros((batch_size, self.in_timesteps, self.num_weather_features))
             if self.include_weather
             else None
         )
@@ -797,7 +795,7 @@ class TrafficDataset(Dataset):
             x_weather = self._get_weather_features(
                 x_weather=x_weather,
                 time_start=time_idx,
-                time_end=time_idx + self.total_timesteps_window - 1,
+                time_end=time_idx + self.in_timesteps - 1,
                 node_indices=node_indices,
             )
 
