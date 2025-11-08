@@ -356,7 +356,7 @@ class TrafficDataset(Dataset):
 
         for file_path in self.dynamic_data_paths + [self.target_data_path]:
             # print(f"Precomputing time indices for {file_path}...")
-            file_indices = np.zeros((self.total_timesteps_in_data - 1, 2), dtype=int)
+            file_indices = np.zeros((self.total_timesteps_in_data, 2), dtype=int)
             # This assumes that the time column is the second column in the data
             # and that it is sorted. If not, we would need to sort it first.
             with h5py.File(file_path, "r") as f:
@@ -364,12 +364,12 @@ class TrafficDataset(Dataset):
                 assert isinstance(time_column, np.ndarray)
                 file_indices[:, 0] = np.searchsorted(
                     time_column,
-                    np.arange(self.total_timesteps_in_data - 1),
+                    np.arange(self.total_timesteps_in_data),
                     side="left",
                 )
                 file_indices[:, 1] = np.searchsorted(
                     time_column,
-                    np.arange(self.total_timesteps_in_data - 1),
+                    np.arange(self.total_timesteps_in_data),
                     side="right",
                 )
             if file_path in self.dynamic_data_paths:
@@ -466,15 +466,27 @@ class TrafficDataset(Dataset):
             assert isinstance(relevant_data_past, np.ndarray)
 
         if relevant_data_past.shape[0] > 0:
-            node_idx, time_idx, feature_idx, values = (
+            node_idx, time_idx_abs, feature_idx, values = (
                 relevant_data_past[:, 0].astype(int),
-                relevant_data_past[:, 1].astype(int) - input_start_time,
+                relevant_data_past[:, 1].astype(int),
                 # Add offset to feature index (each file has its own feature set
                 # so we need to offset them to avoid collisions)
                 relevant_data_past[:, 2].astype(int) + feature_offset_past,
                 relevant_data_past[:, 3],
             )
             del relevant_data_past  # Free memory
+
+            # Filter to only include data within the expected time range
+            time_mask = (time_idx_abs >= input_start_time) & (
+                time_idx_abs <= input_end_time
+            )
+            node_idx = node_idx[time_mask]
+            time_idx_abs = time_idx_abs[time_mask]
+            feature_idx = feature_idx[time_mask]
+            values = values[time_mask]
+
+            # Convert absolute time indices to relative indices
+            time_idx = time_idx_abs - input_start_time
 
             # Only populate features for nodes in the current batch
             batch_mask = np.isin(node_idx, list(node_idx_to_batch_idx.keys()))
@@ -576,15 +588,27 @@ class TrafficDataset(Dataset):
             )
 
         if relevant_data_future.shape[0] > 0:
-            node_idx, time_idx, feature_idx, values = (
+            node_idx, time_idx_abs, feature_idx, values = (
                 relevant_data_future[:, 0].astype(int),
-                relevant_data_future[:, 1].astype(int) - target_start_time,
+                relevant_data_future[:, 1].astype(int),
                 # Add offset to feature index (each file has its own feature set
                 # so we need to offset them to avoid collisions)
                 relevant_data_future[:, 2].astype(int) + feature_offset_future,
                 relevant_data_future[:, 3],
             )
             del relevant_data_future
+
+            # Filter to only include data within the expected time range
+            time_mask = (time_idx_abs >= target_start_time) & (
+                time_idx_abs <= target_end_time
+            )
+            node_idx = node_idx[time_mask]
+            time_idx_abs = time_idx_abs[time_mask]
+            feature_idx = feature_idx[time_mask]
+            values = values[time_mask]
+
+            # Convert absolute time indices to relative indices
+            time_idx = time_idx_abs - target_start_time
 
             # Only populate features for nodes in the current batch
             batch_mask = np.isin(node_idx, list(node_idx_to_batch_idx.keys()))
@@ -720,7 +744,7 @@ class TrafficDataset(Dataset):
         input_start_time = time_idx
         input_end_time = input_start_time + self.in_timesteps - 1
         # Future relevant time indices
-        target_start_time = input_end_time
+        target_start_time = input_end_time + 1
         target_end_time = target_start_time + self.out_timesteps - 1
 
         # Initialize a dense tensor for the dynamic features of this window
