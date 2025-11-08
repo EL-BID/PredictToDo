@@ -837,30 +837,29 @@ class TestTrafficDataset:
         time_idx, node_indices = dataset._get_time_and_node_indices(0)
 
         # Based on actual batch order (node_0 seed with batch_size=2 gives [node_0, node_1])
-        # IMPORTANT: The current implementation has target_start_time = input_end_time
-        # For sample 0: time_idx=0, input=[0], target=[0,1] (overlapping!)
-        # This means future features come from time window [0, 1], not [1, 2]
+        # UPDATED: The current implementation has target_start_time = input_end_time + 1
+        # For sample 0: time_idx=0, input=[0], target=[1,2] (non-overlapping!)
+        # This means future features come from time window [1, 2], not [0, 1]
         # Pattern: value = (node_idx * 10 + time_idx) * 10 + feature_idx
         # Only future_feat_1 (feature_idx=0) and future_feat_2 (feature_idx=1) should be loaded
         # Only values where value % 3 != 0 are included
 
         expected_future_values = {
             # Batch index 0 (node_0):
-            # node_0, time_0, future_feat_1: (0*10 + 0)*10 + 0 = 0 -> filtered out (0 % 3 = 0)
-            # node_0, time_0, future_feat_2: (0*10 + 0)*10 + 1 = 1 -> passes filter (1 % 3 = 1)
-            (0, 0, 1): 1.0,
             # node_0, time_1, future_feat_1: (0*10 + 1)*10 + 0 = 10 -> passes filter (10 % 3 = 1)
-            (0, 1, 0): 10.0,
+            (0, 0, 0): 10.0,
             # node_0, time_1, future_feat_2: (0*10 + 1)*10 + 1 = 11 -> passes filter (11 % 3 = 2)
-            (0, 1, 1): 11.0,
+            (0, 0, 1): 11.0,
+            # node_0, time_2, future_feat_1: (0*10 + 2)*10 + 0 = 20 -> passes filter (20 % 3 = 2)
+            (0, 1, 0): 20.0,
+            # node_0, time_2, future_feat_2: (0*10 + 2)*10 + 1 = 21 -> filtered out (21 % 3 = 0)
             # Batch index 1 (node_1):
-            # node_1, time_0, future_feat_1: (1*10 + 0)*10 + 0 = 100 -> filtered out (100 % 3 = 1)
-            (1, 0, 0): 100.0,
-            # node_1, time_0, future_feat_2: (1*10 + 0)*10 + 1 = 101 -> passes filter (101 % 3 = 2)
-            (1, 0, 1): 101.0,
             # node_1, time_1, future_feat_1: (1*10 + 1)*10 + 0 = 110 -> passes filter (110 % 3 = 2)
-            (1, 1, 0): 110.0,
+            (1, 0, 0): 110.0,
             # node_1, time_1, future_feat_2: (1*10 + 1)*10 + 1 = 111 -> filtered out (111 % 3 = 0)
+            # node_1, time_2, future_feat_1: (1*10 + 2)*10 + 0 = 120 -> filtered out (120 % 3 = 0)
+            # node_1, time_2, future_feat_2: (1*10 + 2)*10 + 1 = 121 -> passes filter (121 % 3 = 1)
+            (1, 1, 1): 121.0,
         }
 
         # Verify expected non-zero values
@@ -875,9 +874,11 @@ class TestTrafficDataset:
             )
 
         # Verify zero values where we expect them (filtered out by sparsity)
+        # UPDATED: For time window [1, 2]
         zero_positions = [
-            (0, 0, 0),  # node_0, time_0, future_feat_1: 0 % 3 = 0
-            (1, 1, 1),  # node_1, time_1, future_feat_2: 111 % 3 = 0
+            (0, 1, 1),  # node_0, time_2, future_feat_2: 21 % 3 = 0
+            (1, 0, 1),  # node_1, time_1, future_feat_2: 111 % 3 = 0
+            (1, 1, 0),  # node_1, time_2, future_feat_1: 120 % 3 = 0
         ]
 
         for batch_idx, time_idx, feat_idx in zero_positions:
@@ -887,10 +888,10 @@ class TestTrafficDataset:
             )
 
         assert (
-            future_features[0, 0, 0].item() == 0.0
-        )  # node_0, time_0, future_feat_1 -> 0 % 3 = 0
+            future_features[0, 1, 1].item() == 0.0
+        )  # node_0, time_2, future_feat_2 -> 21 % 3 = 0
         assert (
-            future_features[1, 1, 1].item() == 0.0
+            future_features[1, 0, 1].item() == 0.0
         )  # node_1, time_1, future_feat_2 -> 111 % 3 = 0
 
         # Check that future_features_idxs mapping is working correctly
@@ -932,7 +933,7 @@ class TestTrafficDataset:
 
         # Based on our deterministic target data:
         # Pattern: value = node_idx * 10 + time_idx + 100
-        # Sample 0: time window [0, 1] (target comes after in_timesteps=1)
+        # UPDATED: Sample 0: time_idx=0, input=[0], target=[1, 2] (after in_timesteps=1)
 
         time_idx, node_indices = dataset_controlled._get_time_and_node_indices(0)
 
@@ -940,19 +941,19 @@ class TestTrafficDataset:
         assert targets.shape == (3, 2), f"Expected shape (3, 2), got {targets.shape}"
 
         # Based on actual batch order (node_0 seed with batch_size=3 gives [node_0, node_1, node_2])
-        # Time window [0, 1] for targets (after in_timesteps=1)
+        # UPDATED: Time window [1, 2] for targets (after in_timesteps=1)
         # Pattern: value = node_idx * 10 + time_idx + 100
 
         expected_target_values = {
             # Batch index 0 (node_0):
-            (0, 0): 100.0,  # node_0, time_0: 0*10 + 0 + 100 = 100
-            (0, 1): 101.0,  # node_0, time_1: 0*10 + 1 + 100 = 101
+            (0, 0): 101.0,  # node_0, time_1: 0*10 + 1 + 100 = 101
+            (0, 1): 102.0,  # node_0, time_2: 0*10 + 2 + 100 = 102
             # Batch index 1 (node_1):
-            (1, 0): 110.0,  # node_1, time_0: 1*10 + 0 + 100 = 110
-            (1, 1): 111.0,  # node_1, time_1: 1*10 + 1 + 100 = 111
+            (1, 0): 111.0,  # node_1, time_1: 1*10 + 1 + 100 = 111
+            (1, 1): 112.0,  # node_1, time_2: 1*10 + 2 + 100 = 112
             # Batch index 2 (node_2):
-            (2, 0): 120.0,  # node_2, time_0: 2*10 + 0 + 100 = 120
-            (2, 1): 121.0,  # node_2, time_1: 2*10 + 1 + 100 = 121
+            (2, 0): 121.0,  # node_2, time_1: 2*10 + 1 + 100 = 121
+            (2, 1): 122.0,  # node_2, time_2: 2*10 + 2 + 100 = 122
         }
 
         # Verify exact target values
@@ -964,22 +965,22 @@ class TestTrafficDataset:
 
         # Test time window shifting - different samples should have different target windows
         if len(dataset_controlled) > 1:
-            sample_1 = dataset_controlled[1]  # time_idx=1, so target window is [1, 2]
+            sample_1 = dataset_controlled[1]  # time_idx=1, input=[1], target=[2, 3]
             targets_1 = sample_1.y
             assert isinstance(targets_1, torch.Tensor)
 
             # Verify the time shift worked correctly for sample 1
-            # Time window [1, 2] for targets (time_idx=1)
+            # UPDATED: Time window [2, 3] for targets (time_idx=1, input=[1])
             expected_shifted_values = {
                 # Batch index 0 (node_0):
-                (0, 0): 101.0,  # node_0, time_1: 0*10 + 1 + 100 = 101
-                (0, 1): 102.0,  # node_0, time_2: 0*10 + 2 + 100 = 102
+                (0, 0): 102.0,  # node_0, time_2: 0*10 + 2 + 100 = 102
+                (0, 1): 103.0,  # node_0, time_3: 0*10 + 3 + 100 = 103
                 # Batch index 1 (node_1):
-                (1, 0): 111.0,  # node_1, time_1: 1*10 + 1 + 100 = 111
-                (1, 1): 112.0,  # node_1, time_2: 1*10 + 2 + 100 = 112
+                (1, 0): 112.0,  # node_1, time_2: 1*10 + 2 + 100 = 112
+                (1, 1): 113.0,  # node_1, time_3: 1*10 + 3 + 100 = 113
                 # Batch index 2 (node_2):
-                (2, 0): 121.0,  # node_2, time_1: 2*10 + 1 + 100 = 121
-                (2, 1): 122.0,  # node_2, time_2: 2*10 + 2 + 100 = 122
+                (2, 0): 122.0,  # node_2, time_2: 2*10 + 2 + 100 = 122
+                (2, 1): 123.0,  # node_2, time_3: 2*10 + 3 + 100 = 123
             }
 
             # Verify exact shifted target values
