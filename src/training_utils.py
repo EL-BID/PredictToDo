@@ -66,6 +66,12 @@ def pad_collate(batch):
     if hasattr(batch[0], "node_indices"):
         out["node_indices"] = batch[0].node_indices  # (N,) shared across items
 
+    # Optional: weather features
+    if hasattr(batch[0], "x_weather"):
+        out["x_weather"] = torch.stack(
+            [d.x_weather for d in batch], dim=0
+        )  # (B, N, Tin, F_weather)
+
     return out
 
 
