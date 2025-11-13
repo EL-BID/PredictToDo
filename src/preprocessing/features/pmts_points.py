@@ -13,7 +13,7 @@ from tqdm.auto import tqdm
 tqdm.pandas()
 
 
-class PMTSProcessor:
+class PMTSPointsProcessor:
     """
     A class for processing PMTS (Traffic Management Plans) data and assigning
     their impact to road segments.
@@ -714,7 +714,7 @@ if __name__ == "__main__":
     output_dir = "data/datos_procesados/pmts_processed/"
 
     # Initialize processor
-    processor = PMTSProcessor(
+    processor = PMTSPointsProcessor(
         coi_parques_path=coi_parques_path,
         coi_puntos_path=coi_puntos_path,
         road_network_path=road_network_path,
