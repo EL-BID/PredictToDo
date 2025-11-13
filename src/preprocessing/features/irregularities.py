@@ -1,49 +1,3 @@
-"""
-Irregularities Data Processor
-
-This module provides a comprehensive class for processing Waze traffic irregularities data
-and assigning them to road network segments for traffic forecasting applications.
-
-The IrregularitiesProcessor class handles:
-1. Loading and preprocessing Waze irregularities data from multiple parquet files
-2. Temporal slicing of irregularities into 15-minute intervals
-3. Spatial intersection with road network segments
-4. Weighted aggregation based on temporal and spatial overlap
-5. Feature engineering for different alert types and metrics
-6. Batch processing for memory efficiency
-
-Irregularities include traffic incidents like:
-- Traffic jams with severity, speed, and trend information
-- Road hazards and alerts
-- Construction and road work notifications
-- Weather-related incidents
-
-The processor handles temporal overlap by:
-- Splitting irregularities across 15-minute buckets
-- Weighting features by the proportion of time in each bucket
-- Weighting features by the proportion of road segment overlap
-
-Spatial overlap is handled by:
-- Buffering road segments (default: 4 meters)
-- Computing intersection lengths
-- Filtering low-overlap matches (default: 20% threshold)
-- Weighting features by overlap ratio
-
-Typical usage:
-    processor = IrregularitiesProcessor(
-        input_folder="data/4_velocidades_waze/irregularidades",
-        road_network_path="data/2_Estructura_via/estructura_via_completa/MVI.geojson",
-        output_dir="data/datos_procesados/irregularidades_procesadas/",
-        n_chunks=10,
-    )
-    processor.process_and_save()
-
-Author: Martin Sevilla
-Date: November 2025
-"""
-
-import glob
-import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -750,18 +704,9 @@ class IrregularitiesProcessor:
         print("Irregularities Data Processing Complete!")
         print("=" * 70)
         print(f"\nAll outputs saved to: {self.output_dir}")
-        print("\nThese files are ready for integration with the SparseDatasetGenerator")
-        print("in merging.py for traffic forecasting model training.")
 
 
-# Example usage and CLI interface
 if __name__ == "__main__":
-    """
-    Command-line interface for irregularities data processing.
-
-    This script can be run directly to process irregularities data with default paths.
-    Modify the paths below to match your data directory structure.
-    """
     # Define input data paths
     input_folder = "data/4_velocidades_waze/irregularidades"
     road_network_path = "data/2_Estructura_via/estructura_via_completa/MVI.geojson"
@@ -781,4 +726,4 @@ if __name__ == "__main__":
     # Execute processing pipeline
     processor.process_and_save()
 
-    print("\n✓ Processing complete! You can now use these files in merging.py")
+    print("\nProcessing complete!")
