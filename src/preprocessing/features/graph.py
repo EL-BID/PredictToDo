@@ -272,7 +272,7 @@ class RoadGraphConstructor:
             + "_"
             + road_df["MVISVIA"].str.replace(" ", "")
         )
-        road_df["contador"] = road_df.groupby("id_mvi").cumcount() + 1
+        road_df["contador"] = road_df.groupby("id_mvi").cumcount() + 1  # type: ignore
         road_df["id_mvi"] = road_df["id_mvi"] + "." + road_df["contador"].astype(str)
 
         # Dissolve split segments into unified roads
