@@ -213,7 +213,8 @@ class EventsProcessor:
 
         # Create Point geometries
         events["geometry"] = events.apply(  # type: ignore
-            lambda row: Point(row["Longitude"], row["Latutude"]), axis=1
+            lambda row: Point(row["Longitude"], row["Latutude"]),  # type: ignore
+            axis=1,  # type: ignore
         )
 
         # Convert to GeoDataFrame
@@ -330,10 +331,10 @@ class EventsProcessor:
 
         # Ensure geometries are Point objects
         joined["geometry"] = joined["geometry"].apply(  # type: ignore
-            lambda x: Point(x) if not isinstance(x, Point) else x
+            lambda x: Point(x) if not isinstance(x, Point) else x  # type: ignore
         )
         joined["centroid"] = joined["centroid"].apply(  # type: ignore
-            lambda x: Point(x) if not isinstance(x, Point) else x
+            lambda x: Point(x) if not isinstance(x, Point) else x  # type: ignore
         )
 
         # Calculate distance from event to road centroid
@@ -537,8 +538,6 @@ class EventsProcessor:
         print("Events Data Processing Complete!")
         print("=" * 70)
         print(f"\nOutput saved to: {output_path}")
-        print("\nThis file is ready for integration with the SparseDatasetGenerator")
-        print("in merging.py for traffic forecasting model training.")
 
 
 if __name__ == "__main__":
@@ -569,4 +568,4 @@ if __name__ == "__main__":
     # Execute processing pipeline
     processor.process_and_save()
 
-    print("\n✓ Processing complete! You can now use this file in merging.py")
+    print("\nProcessing complete!")
