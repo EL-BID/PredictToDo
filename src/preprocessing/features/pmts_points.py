@@ -29,7 +29,7 @@ class PMTSPointsProcessor:
         output_dir (str): Directory where processed files will be saved
         buffer_distance (float): Buffer distance in meters for spatial joins (default: 4)
         overlap_threshold (float): Minimum overlap ratio for park intersections (default: 0.15)
-        temporal_resolution (str): Temporal aggregation frequency (default: "15T" = 15 minutes)
+        temporal_resolution (str): Temporal aggregation frequency (default: "15min" = 15 minutes)
         target_crs (str): Target coordinate reference system for spatial operations (default: "EPSG:3116")
     """
 
@@ -62,7 +62,7 @@ class PMTSPointsProcessor:
         coi_tramos_path: str | None = None,
         buffer_distance: float = 4.0,
         overlap_threshold: float = 0.15,
-        temporal_resolution: str = "15T",
+        temporal_resolution: str = "15min",
         target_crs: str = "EPSG:3116",
     ):
         """
@@ -76,7 +76,7 @@ class PMTSPointsProcessor:
             coi_tramos_path: Optional path to COI road segments GeoJSON file
             buffer_distance: Buffer distance in meters around road segments for spatial joins (default: 4)
             overlap_threshold: Minimum overlap ratio to consider park-road intersection (default: 0.15)
-            temporal_resolution: Pandas frequency string for temporal expansion (default: "15T")
+            temporal_resolution: Pandas frequency string for temporal expansion (default: "15min")
             target_crs: EPSG code for projected coordinate system (default: "EPSG:3116")
         """
         self.coi_parques_path = coi_parques_path
@@ -381,7 +381,7 @@ class PMTSPointsProcessor:
             return pd.DatetimeIndex([])
 
         # Generate all 15-min timestamps for the interval
-        all_times = pd.date_range(start=row["FINI"], end=row["FFIN"], freq="15T")
+        all_times = pd.date_range(start=row["FINI"], end=row["FFIN"], freq="15min")
         if all_times.empty:
             return pd.DatetimeIndex([])
 
@@ -449,7 +449,7 @@ class PMTSPointsProcessor:
             end_month = row["FFIN"].replace(day=1, hour=0, minute=0, second=0)
             return pd.date_range(start=start_month, end=end_month, freq="MS").to_list()
 
-        df["month_starts"] = df.progress_apply(get_month_starts, axis=1)
+        df["month_starts"] = df.progress_apply(get_month_starts, axis=1)  # type: ignore
         df_exploded = df.explode("month_starts").reset_index(drop=True)
 
         # Adjust chunk boundaries
@@ -458,7 +458,7 @@ class PMTSPointsProcessor:
             df_exploded["chunk_start"] < df_exploded["FINI"], "chunk_start"
         ] = df_exploded["FINI"]
 
-        df_exploded["chunk_end"] = df_exploded["month_starts"] + pd.offsets.MonthEnd(1)
+        df_exploded["chunk_end"] = df_exploded["month_starts"] + pd.offsets.MonthEnd(1)  # type: ignore
         df_exploded["chunk_end"] = df_exploded[["chunk_end", "FFIN"]].min(axis=1)
 
         df_exploded = df_exploded.drop(columns=["month_starts", "FINI", "FFIN"])
@@ -491,6 +491,10 @@ class PMTSPointsProcessor:
         # Load and intersect with road network
         coi_parques = gpd.read_file(self.coi_parques_path)
         coi_parques = coi_parques.to_crs("EPSG:4326")
+
+        assert self.road_network_buffered is not None, (
+            "Road network must be loaded first."
+        )
 
         coi_parques_intersections = gpd.overlay(
             coi_parques,
@@ -536,7 +540,7 @@ class PMTSPointsProcessor:
         print("  Generating 15-minute timeframes...")
         coi_parques_work["time_slots"] = coi_parques_work.progress_apply(
             self.generate_simple_timeframes, axis=1
-        )
+        )  # type: ignore
 
         # Explode and aggregate
         coi_parques_work = coi_parques_work.explode("time_slots").reset_index(drop=True)
@@ -579,6 +583,10 @@ class PMTSPointsProcessor:
         coi_puntos = gpd.read_file(self.coi_puntos_path)
         coi_puntos = coi_puntos.to_crs("EPSG:4326")
         coi_puntos["id_coi_punto"] = coi_puntos.index
+
+        assert self.road_network_buffered is not None, (
+            "Road network must be loaded first."
+        )
 
         coi_puntos_intersections = gpd.overlay(
             coi_puntos,
@@ -637,7 +645,7 @@ class PMTSPointsProcessor:
                 coi_puntos_work_current.progress_apply(
                     self.generate_complex_timeframes, axis=1
                 )
-            )
+            )  # type: ignore
 
             # Explode and aggregate
             coi_puntos_work_current = coi_puntos_work_current.explode(
@@ -721,11 +729,11 @@ if __name__ == "__main__":
         output_dir=output_dir,
         buffer_distance=4.0,
         overlap_threshold=0.15,
-        temporal_resolution="15T",
+        temporal_resolution="15min",
         target_crs="EPSG:3116",
     )
 
     # Execute processing pipeline
     processor.process_and_save()
 
-    print("\n✓ Processing complete! You can now use these files in merging.py")
+    print("\nProcessing complete!")
