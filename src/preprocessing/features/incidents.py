@@ -125,7 +125,8 @@ class IncidentsProcessor:
 
         # Create Point geometries from coordinates
         incidents["geometry"] = incidents.apply(  # type: ignore[call-overload]
-            lambda row: Point(row["Coordenada X"], row["Coordenada Y"]), axis=1
+            lambda row: Point(row["Coordenada X"], row["Coordenada Y"]),  # type: ignore
+            axis=1,  # type: ignore
         )
 
         # Convert to GeoDataFrame
@@ -172,9 +173,9 @@ class IncidentsProcessor:
         # Add count column for aggregation
         joined["totals"] = 1
 
-        # Parse closing dates with progress bar
+        # Parse closing dates
         print("  Parsing closing dates...")
-        joined["closing_date"] = joined["Fecha Cierre"].progress_apply(
+        joined["closing_date"] = joined["Fecha Cierre"].apply(
             lambda x: dt.datetime.strptime(x, "%Y-%m-%d %H:%M:%S")
         )
 
@@ -355,8 +356,6 @@ class IncidentsProcessor:
         print("Incidents Data Processing Complete!")
         print("=" * 70)
         print(f"\nOutput saved to: {output_path}")
-        print("\nThis file is ready for integration with the SparseDatasetGenerator")
-        print("in merging.py for traffic forecasting model training.")
 
 
 if __name__ == "__main__":
@@ -377,4 +376,4 @@ if __name__ == "__main__":
     # Execute processing pipeline
     processor.process_and_save()
 
-    print("\n✓ Processing complete! You can now use this file in merging.py")
+    print("\n✓ Processing complete!")
