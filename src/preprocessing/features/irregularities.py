@@ -127,7 +127,7 @@ class IrregularitiesProcessor:
 
         while current < end:
             # Find "floor" of current to the nearest 15 minutes, then add 15 min
-            floor_q = current.floor("15T")
+            floor_q = current.floor("15min")
             next_bound = floor_q + pd.Timedelta(minutes=15)
 
             # If current is exactly on a quarter, jump to the next one
@@ -226,14 +226,14 @@ class IrregularitiesProcessor:
             df = pd.read_parquet(archivo)
 
             # Parse geometry from WKT or WKB format
-            df["geometry"] = df["geom_wkt"].apply(  # type: ignore
+            df["geometry"] = df["geom_wkt"].apply(
                 lambda geom: (
                     wkb.loads(geom)
                     if isinstance(geom, bytes)
                     else wkt.loads(geom)
                     if isinstance(geom, str)
                     else geom
-                )
+                )  # type: ignore
             )
 
             # Explode alerts array into separate rows
