@@ -170,7 +170,7 @@ class JamsProcessor:
                 else wkt.loads(geom)
                 if isinstance(geom, str)
                 else geom
-            )
+            )  # type: ignore
         )
 
         # Create GeoDataFrame
