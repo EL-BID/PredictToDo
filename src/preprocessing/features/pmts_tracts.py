@@ -356,7 +356,7 @@ class PMTSTractsProcessor:
             return pd.DatetimeIndex([])
 
         # Generate all 15-minute timestamps for this date range
-        all_times = pd.date_range(start=row["FINI"], end=row["FFIN"], freq="15T")
+        all_times = pd.date_range(start=row["FINI"], end=row["FFIN"], freq="15min")
         if all_times.empty:
             return pd.DatetimeIndex([])
 
@@ -419,7 +419,7 @@ class PMTSTractsProcessor:
         if pd.isna(row["FINI"]) or pd.isna(row["FFIN"]):
             return pd.DatetimeIndex([])
 
-        all_times = pd.date_range(start=row["FINI"], end=row["FFIN"], freq="15T")
+        all_times = pd.date_range(start=row["FINI"], end=row["FFIN"], freq="15min")
         if all_times.empty:
             return pd.DatetimeIndex([])
 
@@ -483,7 +483,7 @@ class PMTSTractsProcessor:
             end_month = row["FFIN"].replace(day=1, hour=0, minute=0, second=0)
             return pd.date_range(start=start_month, end=end_month, freq="MS").to_list()
 
-        df["month_starts"] = df.progress_apply(get_month_starts, axis=1)
+        df["month_starts"] = df.progress_apply(get_month_starts, axis=1)  # type: ignore
 
         # Step 2: Explode to create one row per month
         df_exploded = df.explode("month_starts").reset_index(drop=True)
@@ -495,7 +495,7 @@ class PMTSTractsProcessor:
         ] = df_exploded["FINI"]
 
         # Step 4: Calculate chunk_end (min of month end and original FFIN)
-        df_exploded["chunk_end"] = df_exploded["month_starts"] + pd.offsets.MonthEnd(1)
+        df_exploded["chunk_end"] = df_exploded["month_starts"] + pd.offsets.MonthEnd(1)  # type: ignore
         df_exploded["chunk_end"] = df_exploded[["chunk_end", "FFIN"]].min(axis=1)
 
         # Clean up and rename
@@ -536,6 +536,9 @@ class PMTSTractsProcessor:
 
         # Spatial intersection with road network
         print("\n[2/6] Performing spatial intersection with road network...")
+        assert self.mvi_buffered is not None, (
+            "Road network must be loaded and buffered before processing COI Tramo"
+        )
         coi_tramo_intersections = gpd.overlay(
             coi_tramo,
             self.mvi_buffered[["id_mvi", "mvi_length", "geometry"]],
@@ -584,7 +587,7 @@ class PMTSTractsProcessor:
 
         # Generate full list of months
         monthly_dates = pd.date_range(start=start_date, end=end_date, freq="MS")
-        monthly_dates_list = [pd.Timestamp(d, tz="UTC") for d in monthly_dates]
+        monthly_dates_list = [pd.Timestamp(d) for d in monthly_dates]
 
         print(f"  Processing {len(monthly_dates_list) - 1} monthly chunks")
 
@@ -611,7 +614,7 @@ class PMTSTractsProcessor:
                 coi_tramo_work_current.progress_apply(
                     self.generate_timeframes_vectorized_per_row, axis=1
                 )
-            )
+            )  # type: ignore
 
             # Explode time slots
             coi_tramo_work_current = coi_tramo_work_current.explode(
@@ -668,6 +671,9 @@ class PMTSTractsProcessor:
 
         # Spatial intersection with road network
         print("\n[2/5] Performing spatial intersection with road network...")
+        assert self.mvi_buffered is not None, (
+            "Road network must be loaded and buffered before processing COOS Punto"
+        )
         coos_punto_intersections = gpd.overlay(
             coos_punto,
             self.mvi_buffered[["id_mvi", "mvi_length", "geometry"]],
@@ -693,7 +699,7 @@ class PMTSTractsProcessor:
         )
         coos_punto_work["time_slots"] = coos_punto_work.progress_apply(
             self.generate_timeframes_vectorized_fully, axis=1
-        )
+        )  # type: ignore
 
         # Explode time slots
         print("\n[4/5] Exploding time slots...")
@@ -773,4 +779,4 @@ if __name__ == "__main__":
     # Execute processing pipeline
     processor.process_and_save()
 
-    print("\nProcessing complete! You can now use these files in merging.py")
+    print("\nProcessing complete!")
