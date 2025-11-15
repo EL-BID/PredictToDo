@@ -28,6 +28,7 @@ from torch_geometric.loader import DataLoader
 # Reload to get the optimized version
 import importlib
 import src.sparse_dataloader
+
 importlib.reload(src.sparse_dataloader)
 from src.sparse_dataloader import TrafficDataset
 
@@ -62,7 +63,7 @@ traffic_dataset = TrafficDataset(
     target_data_path=target_data_filename,
     in_timesteps=in_timesteps,
     out_timesteps=out_timesteps,
-    future_features = [
+    future_features=[
         "coi_puntos",
         "coi_tramo",
         "AGLOMERACION",
@@ -77,9 +78,9 @@ batch_size = 16
 
 traffic_dataloader = DataLoader(
     dataset=traffic_dataset,
-    batch_size=batch_size, # This now batches the Data objects
+    batch_size=batch_size,  # This now batches the Data objects
     shuffle=True,
-    num_workers=0 
+    num_workers=0,
 )
 
 # %%
@@ -117,6 +118,7 @@ print("-" * 40)
 
 # %%
 import time
+
 num_epochs = 3  # Reduced for testing
 
 for epoch in range(num_epochs):
@@ -127,7 +129,7 @@ for epoch in range(num_epochs):
     for step, batch in enumerate(traffic_dataloader):
         iter_start = time.perf_counter()
         data_wait_s = iter_start - prev_end
-        print(f"Batch {step}: dataloader wait = {data_wait_s*1000:.1f} ms")
+        print(f"Batch {step}: dataloader wait = {data_wait_s * 1000:.1f} ms")
         prev_end = time.perf_counter()
         if step >= 3:  # Only test first few batches
             break
@@ -148,8 +150,15 @@ file_indices = np.zeros((traffic_dataset.total_timesteps_in_data - 1, 2), dtype=
 with h5py.File(file_path, "r") as f:
     # Reading the entire time_idx column can be slow
     time_column = f["data"][:, 1]
-    file_indices[:, 0] = np.searchsorted(time_column, np.arange(traffic_dataset.total_timesteps_in_data - 1), side='left')
-    file_indices[:, 1] = np.searchsorted(time_column, np.arange(traffic_dataset.total_timesteps_in_data - 1), side='right')
+    file_indices[:, 0] = np.searchsorted(
+        time_column, np.arange(traffic_dataset.total_timesteps_in_data - 1), side="left"
+    )
+    file_indices[:, 1] = np.searchsorted(
+        time_column,
+        np.arange(traffic_dataset.total_timesteps_in_data - 1),
+        side="right",
+    )
+
 
 def demo_no_sorting(idx):
     input_start_time = idx
@@ -176,10 +185,13 @@ def demo_sorted(idx):
         relevant_data = f["data"][start_index:end_index]
     return relevant_data
 
+
 relevant_data_no_sorting = demo_no_sorting(idx)
 relevant_data_sorted = demo_sorted(idx)
 
-assert (relevant_data_sorted == relevant_data_no_sorting).mean() == 1.0, "Data mismatch between sorted and unsorted methods"
+assert (relevant_data_sorted == relevant_data_no_sorting).mean() == 1.0, (
+    "Data mismatch between sorted and unsorted methods"
+)
 
 # %%
 # %lprun -f demo_no_sorting demo_no_sorting(idx)
@@ -209,16 +221,16 @@ col_idx = np.random.randint(0, cols, num_nonzero)
 values = np.random.randint(1, 100, num_nonzero)
 data[row_idx, col_idx] = values
 
-df = pd.DataFrame(data, columns=range(1, cols+1))
+df = pd.DataFrame(data, columns=range(1, cols + 1))
 
-df.head(14).style.map(lambda x: 'color: red' if x != 0 else '', subset=df.columns)
+df.head(14).style.map(lambda x: "color: red" if x != 0 else "", subset=df.columns)
 
 # %%
 # Convert to long format for better visualization
-df_long = df.reset_index().melt(id_vars='index', var_name='Feature', value_name='Value')
-df_long = df_long[df_long['Value'] != 0]
-df_long.sort_values(by=['index', 'Feature'], inplace=True)
-df_long.head().style.map(lambda x: 'color: red' if x != 0 else '', subset=['Value'])
+df_long = df.reset_index().melt(id_vars="index", var_name="Feature", value_name="Value")
+df_long = df_long[df_long["Value"] != 0]
+df_long.sort_values(by=["index", "Feature"], inplace=True)
+df_long.head().style.map(lambda x: "color: red" if x != 0 else "", subset=["Value"])
 
 # %%
 # Size of df in KB
