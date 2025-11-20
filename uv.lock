@@ -1733,6 +1733,23 @@ wheels = [
 ]
 
 [[package]]
+name = "osmnx"
+version = "2.0.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "geopandas" },
+    { name = "networkx" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "requests" },
+    { name = "shapely" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/11/9c/24b31365332ef3a5a051dc9b39fe21204bf4bbae1509dc6035aaf7137c68/osmnx-2.0.6.tar.gz", hash = "sha256:0a00844d3f3f69af42b2dcae835261da77ac7b8e20b1c13cc89a62ab3ab9bc2e", size = 87798 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/77/5f/2fc0135c5aa3fc36c7cb1ac63852349681908778eb15ab3e1aacbddc1b54/osmnx-2.0.6-py3-none-any.whl", hash = "sha256:46a719b711b52233701aa238d6a4beb8277c21124906f5b857997e1df9e22b80", size = 101462 },
+]
+
+[[package]]
 name = "overrides"
 version = "7.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2518,6 +2535,7 @@ dependencies = [
     { name = "mapclassify" },
     { name = "networkx" },
     { name = "numpy" },
+    { name = "osmnx" },
     { name = "pyarrow" },
     { name = "tables" },
     { name = "tabulate" },
@@ -2556,6 +2574,7 @@ requires-dist = [
     { name = "mapclassify", specifier = ">=2.9.0" },
     { name = "networkx", specifier = ">=3.5" },
     { name = "numpy", specifier = ">=2.3.0" },
+    { name = "osmnx", specifier = ">=2.0.6" },
     { name = "pyarrow", specifier = ">=20.0.0" },
     { name = "tables", specifier = ">=3.10.2" },
     { name = "tabulate", specifier = ">=0.9.0" },
