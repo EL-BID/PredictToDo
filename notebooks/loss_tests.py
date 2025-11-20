@@ -14,10 +14,10 @@
 # ---
 
 # %%
-import torch
-import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+import torch.nn as nn
 
 # Set plot style for better visualization
 plt.style.use("seaborn-v0_8-whitegrid")
