@@ -18,13 +18,14 @@
 
 # %%
 import os
-import pandas as pd
+import pickle as pkl
+
+import geopandas as gpd
+import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
-import pickle as pkl
-import geopandas as gpd
+import pandas as pd
 from tqdm.notebook import tqdm
-import matplotlib.pyplot as plt
 
 # %load_ext autoreload
 # %autoreload 2
@@ -214,11 +215,16 @@ print(
 # m
 
 m = road_geom.loc[nodes_with_any_jam].explore(
-    style_kwds={"weight": 2.5, "color": "red"}, height=900, width=1500
-)
+    style_kwds={"weight": 2.5, "color": "red"},  # type: ignore
+    height=900,  # type: ignore
+    width=1500,  # type: ignore
+)  # type: ignore
 road_geom.loc[nodes_with_no_jams].explore(
-    m=m, style_kwds={"weight": 2.5, "color": "green"}, height=900, width=1500
-)
+    m=m,  # type: ignore
+    style_kwds={"weight": 2.5, "color": "green"},  # type: ignore
+    height=900,  # type: ignore
+    width=1500,  # type: ignore
+)  # type: ignore
 m
 
 # %% [markdown]
@@ -226,8 +232,10 @@ m
 
 # %%
 m = road_geom.loc[list(disconnected_nodes)].explore(
-    style_kwds={"weight": 3}, height=900, width=1500
-)
+    style_kwds={"weight": 3},  # type: ignore
+    height=900,  # type: ignore
+    width=1500,  # type: ignore
+)  # type: ignore
 m
 
 # %% [markdown]
@@ -342,9 +350,14 @@ import random
 main_node = random.choice(list(neighbor_nodes_with_data.keys()))
 main_node_neighbors = neighbor_nodes_with_data[main_node]
 m = road_geom.loc[[main_node]].explore(
-    style_kwds={"weight": 7, "color": "green"}, height=900, width=1500
-)
+    style_kwds={"weight": 7, "color": "green"},  # type: ignore
+    height=900,  # type: ignore
+    width=1500,  # type: ignore
+)  # type: ignore
 road_geom.loc[main_node_neighbors].explore(
-    m=m, style_kwds={"weight": 7, "color": "red"}, height=900, width=1500
-)
+    m=m,  # type: ignore
+    style_kwds={"weight": 7, "color": "red"},  # type: ignore
+    height=900,  # type: ignore
+    width=1500,  # type: ignore
+)  # type: ignore
 m
