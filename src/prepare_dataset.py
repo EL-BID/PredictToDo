@@ -19,6 +19,8 @@ def run_feature_generation():
     print("=" * 80)
 
     # Import processors
+    from preprocessing.features.buildings import BuildingsProcessor
+    from preprocessing.features.bus_stops import BusStopsProcessor
     from preprocessing.features.events import EventsProcessor
     from preprocessing.features.graph import RoadGraphConstructor
     from preprocessing.features.incidents import IncidentsProcessor
@@ -29,8 +31,32 @@ def run_feature_generation():
     from preprocessing.features.road_state import RoadStateProcessor
     from preprocessing.features.weather import WeatherProcessor
 
-    # 1.1: Road Network Graph (must be first - other processors depend on it)
-    print("\n[1.1] Building Road Network Graph...")
+    # 1.0: Buildings (must run first - graph constructor depends on this)
+    print("\n[1.0] Processing Buildings...")
+    print("-" * 80)
+    buildings_processor = BuildingsProcessor(
+        road_network_path="data/2_Estructura_via/estructura_via_completa/MVI.geojson",
+        output_dir="data/datos_procesados/buildings/",
+        buffer_distance_wgs84=0.01,  # ~1km for bbox calculation
+        buffer_distance_meters=100.0,  # 100m for building assignment
+        target_crs="EPSG:3116",  # Colombia projected CRS
+    )
+    buildings_processor.process_and_save()
+
+    # 1.1: Bus Stops (must run before graph constructor)
+    print("\n[1.1] Processing Bus Stops...")
+    print("-" * 80)
+    bus_stops_processor = BusStopsProcessor(
+        bus_stops_shapefile="data/15_Paraderos_transp_publico_Zonales_SITP/Paraderos_Zonales_del_SITP.shp",
+        road_network_path="data/2_Estructura_via/estructura_via_completa/MVI.geojson",
+        output_dir="data/datos_procesados/bus_stops/",
+        max_distance_degrees=0.005,
+        target_crs="EPSG:21899",
+    )
+    bus_stops_processor.process_and_save()
+
+    # 1.2: Road Network Graph (depends on buildings and bus stops)
+    print("\n[1.2] Building Road Network Graph...")
     print("-" * 80)
     graph_constructor = RoadGraphConstructor(
         road_network_path="data/2_Estructura_via/estructura_via_completa/MVI.geojson",
@@ -47,8 +73,8 @@ def run_feature_generation():
     graph = graph_constructor.build_graph()
     graph_constructor.save_graph(graph, formats=["pickle", "graphml", "json"])
 
-    # 1.2: Events
-    print("\n[1.2] Processing Events...")
+    # 1.3: Events
+    print("\n[1.3] Processing Events...")
     print("-" * 80)
     events_processor = EventsProcessor(
         events_data_path="data/8_eventos/events_dataset_preprocessing.csv",
@@ -66,8 +92,8 @@ def run_feature_generation():
     )
     events_processor.process_and_save()
 
-    # 1.3: Incidents
-    print("\n[1.3] Processing Incidents...")
+    # 1.4: Incidents
+    print("\n[1.4] Processing Incidents...")
     print("-" * 80)
     incidents_processor = IncidentsProcessor(
         incidents_data_path="data/7_incidentes/incidents_dataset_prev.csv",
@@ -78,8 +104,8 @@ def run_feature_generation():
     )
     incidents_processor.process_and_save()
 
-    # 1.4: Irregularities
-    print("\n[1.4] Processing Irregularities...")
+    # 1.5: Irregularities
+    print("\n[1.5] Processing Irregularities...")
     print("-" * 80)
     irregularities_processor = IrregularitiesProcessor(
         input_folder="data/4_velocidades_waze/irregularidades",
@@ -92,8 +118,8 @@ def run_feature_generation():
     )
     irregularities_processor.process_and_save()
 
-    # 1.5: Jams
-    print("\n[1.5] Processing Jams...")
+    # 1.6: Jams
+    print("\n[1.6] Processing Jams...")
     print("-" * 80)
     jams_processor = JamsProcessor(
         jams_data_dir="data/4_velocidades_waze/jams/",
@@ -107,8 +133,8 @@ def run_feature_generation():
     )
     jams_processor.process_and_save()
 
-    # 1.6: PMTs Points (COI Points)
-    print("\n[1.6] Processing PMTs Points...")
+    # 1.7: PMTs Points (COI Points)
+    print("\n[1.7] Processing PMTs Points...")
     print("-" * 80)
     pmts_points_processor = PMTSPointsProcessor(
         coi_parques_path="data/9_pmts/COI_PARQUES_202504071925.geojson",
@@ -122,8 +148,8 @@ def run_feature_generation():
     )
     pmts_points_processor.process_and_save()
 
-    # 1.7: PMTs Tracts (COI Tracts)
-    print("\n[1.7] Processing PMTs Tracts...")
+    # 1.8: PMTs Tracts (COI Tracts)
+    print("\n[1.8] Processing PMTs Tracts...")
     print("-" * 80)
     pmts_tracts_processor = PMTSTractsProcessor(
         coi_tramo_path="data/9_pmts/COI_TRAMO_202504071919.geojson",
@@ -136,8 +162,8 @@ def run_feature_generation():
     )
     pmts_tracts_processor.process_and_save()
 
-    # 1.8: Road State
-    print("\n[1.8] Processing Road State...")
+    # 1.9: Road State
+    print("\n[1.9] Processing Road State...")
     print("-" * 80)
     road_state_processor = RoadStateProcessor(
         road_network_path="data/2_Estructura_via/estructura_via_completa/MVI.geojson",
@@ -150,8 +176,8 @@ def run_feature_generation():
     )
     road_state_processor.process_and_save()
 
-    # 1.9: Weather
-    print("\n[1.9] Processing Weather...")
+    # 1.10: Weather
+    print("\n[1.10] Processing Weather...")
     print("-" * 80)
     weather_processor = WeatherProcessor(
         weather_data_paths={

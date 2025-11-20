@@ -20,55 +20,76 @@ The script executes four main steps:
 
 Creates processed datasets from raw data sources:
 
-1. **Road Network Graph** (`graph.py`)
+0. **Buildings** (`buildings.py`)
+   - Extracts building footprints from OpenStreetMap
+   - Creates 100m buffers around road segments
+   - Performs spatial join between buildings and roads
+   - Aggregates building counts by type (residential, commercial, industrial, etc.)
+   - Output: `roads_buildings.csv`
+   - **Prerequisites**: None (must run first)
+   - **Required by**: Road Network Graph
+
+1. **Bus Stops** (`bus_stops.py`)
+   - Loads SITP bus stop shapefile data
+   - Assigns each bus stop to the nearest road segment
+   - Calculates accurate distances in meters using projected CRS
+   - Aggregates stop counts and statistics per road
+   - Distinguishes between main stops (M) and secondary stops (S)
+   - Output: `bus_stops_per_road.parquet`
+   - **Prerequisites**: None (must run before graph)
+   - **Required by**: Road Network Graph
+
+2. **Road Network Graph** (`graph.py`)
    - Builds a directed graph of the road network
    - Adds node attributes (length, land use, population, buildings, bus stops)
    - Creates legal and illegal edges based on traffic flow rules
    - Output: `road_graph.pickle`, `road_graph.graphml`, `road_graph.json`
+   - **Prerequisites**: Buildings, Bus Stops
+   - **Required by**: Events, other processors
 
-2. **Events** (`events.py`)
+3. **Events** (`events.py`)
    - Processes public events data
    - Assigns events to road segments
    - Propagates impact through network based on complexity
    - Expands temporally to 15-minute intervals
    - Output: `events_dataset.csv`
 
-3. **Incidents** (`incidents.py`)
+4. **Incidents** (`incidents.py`)
    - Processes traffic incidents data
    - Assigns incidents to road segments via spatial join
    - Aggregates by incident type and case specifics
    - Output: `incidents_dataset.csv`
 
-4. **Irregularities** (`irregularities.py`)
+5. **Irregularities** (`irregularities.py`)
    - Processes Waze traffic irregularities
    - Applies dual weighting (temporal + spatial overlap)
    - Slices temporally and intersects spatially with roads
    - Output: Multiple parquet files in batches
 
-5. **Jams** (`jams.py`)
+6. **Jams** (`jams.py`)
    - Processes Waze traffic jam data
    - Calculates jam statistics (velocity, delay, level)
    - Assigns jams to road segments
    - Output: Multiple parquet files
 
-6. **PMTs Points** (`pmts_points.py`)
+7. **PMTs Points** (`pmts_points.py`)
    - Processes traffic management plans (point-based)
    - Handles COI parks and points
    - Expands temporally based on schedules
    - Output: Parquet files by month
 
-7. **PMTs Tracts** (`pmts_tracts.py`)
+8. **PMTs Tracts** (`pmts_tracts.py`)
    - Processes traffic management plans (tract-based)
    - Handles COI tramos and COOS points
    - Output: Parquet files by month
 
-8. **Road State** (`road_state.py`)
+9. **Road State** (`road_state.py`)
    - Processes road condition data
    - Uses AASHTO classification system
    - Assigns conditions to road segments
    - Output: `road_state_dataset.parquet`
 
-9. **Weather** (`weather.py`)
+10. **Weather** (`weather.py`)
    - Processes weather station data
    - Assigns stations to road segments
    - Interpolates weather features
@@ -159,6 +180,10 @@ After running the pipeline, you'll have:
 
 ```
 data/datos_procesados/
+├── buildings/
+│   └── roads_buildings.csv
+├── bus_stops/
+│   └── bus_stops_per_road.parquet
 ├── conectivity_graph/
 │   ├── road_graph.pickle
 │   ├── road_graph.graphml
