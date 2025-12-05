@@ -47,6 +47,7 @@ class TrafficDataset(Dataset):
         weather_data_dir: str | None = None,
         include_weather: bool = False,
         neighbor_features_path: str | None = None,
+        include_velocity_target: bool = False,
     ):
         """
         Args:
@@ -62,10 +63,13 @@ class TrafficDataset(Dataset):
             weather_data_dir (str, optional): Directory containing processed weather data files.
             include_weather (bool): Whether to include weather features in the dataset.
             neighbor_features_path (str, optional): Path to parquet file with neighbor-aggregated features for imputation.
-            free_flow_estimates_path (str, optional): Path to parquet file with free-flow speed estimates.
+            include_velocity_target (bool): Whether to include mean_jam_velocity as a second target dimension.
+                If True, y will have shape (batch_size, out_timesteps, 2) with [jam_level, velocity].
+                If False, y will have shape (batch_size, out_timesteps) with just jam_level.
         """
         super().__init__()
         self.node_seed = node_seed
+        self.include_velocity_target = include_velocity_target
         self.in_timesteps = in_timesteps
         self.out_timesteps = out_timesteps
         self.total_timesteps_window = in_timesteps + out_timesteps
@@ -157,12 +161,7 @@ class TrafficDataset(Dataset):
                         self.dynamic_feature_dims.append(
                             int(hf_data[:, 2].max() + 1)  # type: ignore
                         )
-                    else:
-                        # Check that the target data has just one feature_idx
-                        if hf_data[:, 2].max() != 0:  # type: ignore
-                            raise ValueError(
-                                f"Target data file {file_path} should have only one feature index (0)."
-                            )
+                    # Target data can have multiple features (jam level, velocity)
                 else:
                     if file_path == self.target_data_path:
                         raise ValueError(
@@ -171,6 +170,34 @@ class TrafficDataset(Dataset):
                         )
                     else:
                         self.dynamic_feature_dims.append(0)
+
+        # Load target metadata to get feature indices
+        target_metadata_path = self.target_data_path.replace(".h5", "_metadata.pkl")
+        with open(target_metadata_path, "rb") as f:
+            target_metadata = pickle.load(f)
+        self.target_feature_idx_map = target_metadata.get("feature_idx_map", {})
+
+        # Determine target features and their indices
+        # Primary target is jam level (mean_jam_level)
+        if "mean_jam_level" not in self.target_feature_idx_map:
+            raise ValueError(
+                "Target data must contain 'mean_jam_level' feature. "
+                f"Found features: {list(self.target_feature_idx_map.keys())}"
+            )
+        self.target_level_idx = self.target_feature_idx_map["mean_jam_level"]
+
+        # Optional velocity target
+        self.target_velocity_idx = None
+        if self.include_velocity_target:
+            if "mean_jam_velocity" not in self.target_feature_idx_map:
+                raise ValueError(
+                    "include_velocity_target=True but 'mean_jam_velocity' not found in target data. "
+                    f"Found features: {list(self.target_feature_idx_map.keys())}"
+                )
+            self.target_velocity_idx = self.target_feature_idx_map["mean_jam_velocity"]
+
+        # Number of target features (1 or 2)
+        self.num_target_features = 2 if self.include_velocity_target else 1
 
         self.num_dynamic_features = sum(self.dynamic_feature_dims)
         self.num_dynamic_future_features = len(self.future_features)
@@ -804,7 +831,11 @@ class TrafficDataset(Dataset):
             # Update the feature offset for the next file
             feature_offset_future += num_future_features_in_file
 
-        y = torch.zeros((batch_size, self.out_timesteps))
+        # Initialize target tensor with appropriate shape
+        if self.include_velocity_target:
+            y = torch.zeros((batch_size, self.out_timesteps, self.num_target_features))
+        else:
+            y = torch.zeros((batch_size, self.out_timesteps))
 
         with h5py.File(self.target_data_path, "r") as f:
             start_index = self.target_data_indices[self.target_data_path][
@@ -819,28 +850,49 @@ class TrafficDataset(Dataset):
         # print("Found", target_relevant_data.shape[0], "relevant target entries.\n")
 
         if target_relevant_data.shape[0] > 0:
-            target_node_idx, target_time_idx, target_values = (
-                target_relevant_data[:, 0].astype(int),
-                target_relevant_data[:, 1].astype(int) - target_start_time,
-                # target_relevant_data[:, 2].astype(int), # feature_idx is always 0
-                target_relevant_data[:, 3],
-            )
+            target_node_idx = target_relevant_data[:, 0].astype(int)
+            target_time_idx = target_relevant_data[:, 1].astype(int) - target_start_time
+            target_feature_idx = target_relevant_data[:, 2].astype(int)
+            target_values = target_relevant_data[:, 3]
 
             # Only populate targets for nodes in the current batch
             batch_mask = np.isin(target_node_idx, list(node_idx_to_batch_idx.keys()))
             if batch_mask.sum() > 0:
                 batch_node_idx = target_node_idx[batch_mask]
                 batch_time_idx = target_time_idx[batch_mask]
+                batch_feature_idx = target_feature_idx[batch_mask]
                 batch_values = target_values[batch_mask]
 
                 # Convert global node indices to batch indices
-                batch_node_indices = [
-                    node_idx_to_batch_idx[idx] for idx in batch_node_idx
-                ]
+                batch_node_indices = np.array(
+                    [node_idx_to_batch_idx[idx] for idx in batch_node_idx]
+                )
 
-                y[batch_node_indices, batch_time_idx] = torch.from_numpy(
-                    batch_values
-                ).float()
+                if self.include_velocity_target:
+                    # Populate jam level (feature index 0 in output tensor)
+                    level_mask = batch_feature_idx == self.target_level_idx
+                    if level_mask.sum() > 0:
+                        y[
+                            batch_node_indices[level_mask],
+                            batch_time_idx[level_mask],
+                            0,
+                        ] = torch.from_numpy(batch_values[level_mask]).float()
+
+                    # Populate velocity (feature index 1 in output tensor)
+                    velocity_mask = batch_feature_idx == self.target_velocity_idx
+                    if velocity_mask.sum() > 0:
+                        y[
+                            batch_node_indices[velocity_mask],
+                            batch_time_idx[velocity_mask],
+                            1,
+                        ] = torch.from_numpy(batch_values[velocity_mask]).float()
+                else:
+                    # Only populate jam level, filter by feature index
+                    level_mask = batch_feature_idx == self.target_level_idx
+                    if level_mask.sum() > 0:
+                        y[
+                            batch_node_indices[level_mask], batch_time_idx[level_mask]
+                        ] = torch.from_numpy(batch_values[level_mask]).float()
 
         # Process weather features if enabled
         if (
@@ -937,6 +989,7 @@ if __name__ == "__main__":
         weather_data_dir=f"{processed_data_dir}/sparse_datasets",
         include_weather=True,
         neighbor_features_path=f"{processed_data_dir}/neighbor_features.parquet",
+        include_velocity_target=True,
     )
     print("Dataset initialized.")
     print(f"Total samples in dataset: {len(traffic_dataset)}")
@@ -972,3 +1025,11 @@ if __name__ == "__main__":
         assert batch.x_dynamic_future is not None
         if traffic_dataset.include_weather:
             assert batch.x_weather is not None
+        print("Input features shapes:")
+        print(f"  Static: {batch.x_static.shape}")
+        print(f"  Dynamic past: {batch.x_dynamic_past.shape}")
+        print(f"  Dynamic future: {batch.x_dynamic_future.shape}")
+        if traffic_dataset.include_weather:
+            print(f"  Weather: {batch.x_weather.shape}")
+        print("Target shape:")
+        print(f"  {batch.y.shape}")
