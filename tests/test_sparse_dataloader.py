@@ -110,17 +110,31 @@ class TestDataGenerator:
 
         return h5_path, metadata_path
 
-    def create_target_data(self, temp_dir: str) -> str:
-        """Create target data (jams) HDF5 file with single feature."""
+    def create_target_data(self, temp_dir: str, include_velocity: bool = False) -> str:
+        """Create target data (jams) HDF5 file with metadata.
+
+        Args:
+            temp_dir: Directory to save files
+            include_velocity: If True, include mean_jam_velocity as second feature
+        """
         data_list = []
+
+        # Feature indices: mean_jam_level=0, mean_jam_velocity=1 (if included)
+        feature_names = ["mean_jam_level"]
+        if include_velocity:
+            feature_names.append("mean_jam_velocity")
 
         for time_idx in range(self.num_timesteps):
             for node_idx in range(self.num_nodes):
                 if np.random.rand() > 0.5:  # 50% sparsity for target
-                    value = np.random.rand() * 100  # Jam level 0-100
-                    data_list.append(
-                        [node_idx, time_idx, 0, value]
-                    )  # feature_idx always 0 for target
+                    # Jam level (0-5 scale)
+                    level_value = np.random.randint(1, 6)
+                    data_list.append([node_idx, time_idx, 0, level_value])
+
+                    if include_velocity:
+                        # Velocity (km/h scale, e.g., 10-80)
+                        velocity_value = np.random.rand() * 70 + 10
+                        data_list.append([node_idx, time_idx, 1, velocity_value])
 
         # Sort by time_idx
         data_array = np.array(data_list)
@@ -130,6 +144,18 @@ class TestDataGenerator:
         target_path = os.path.join(temp_dir, "target_data.h5")
         with h5py.File(target_path, "w") as f:
             f.create_dataset("data", data=data_array)
+
+        # Create metadata file with feature mapping
+        feature_idx_map = {name: i for i, name in enumerate(feature_names)}
+        metadata = {
+            "node_idx_map": self.node_idx_map,
+            "time_idx_map": self.time_idx_map,
+            "feature_idx_map": feature_idx_map,
+        }
+
+        metadata_path = os.path.join(temp_dir, "target_data_metadata.pkl")
+        with open(metadata_path, "wb") as f:
+            pickle.dump(metadata, f)
 
         return target_path
 
@@ -1110,6 +1136,25 @@ class TestTrafficDataset:
         with h5py.File(target_path, "w") as f:
             f.create_dataset("data", data=data_array)
 
+        # Create metadata file with feature mapping
+        node_ids = [f"node_{i}" for i in range(num_nodes)]
+        node_idx_map = {node: i for i, node in enumerate(node_ids)}
+        timeframes = pd.date_range(
+            start="2024-01-01", periods=num_timesteps, freq="15min"
+        ).to_list()
+        time_idx_map = {ts: i for i, ts in enumerate(timeframes)}
+        feature_idx_map = {"mean_jam_level": 0}
+
+        metadata = {
+            "node_idx_map": node_idx_map,
+            "time_idx_map": time_idx_map,
+            "feature_idx_map": feature_idx_map,
+        }
+
+        metadata_path = os.path.join(temp_dir, "deterministic_target_metadata.pkl")
+        with open(metadata_path, "wb") as f:
+            pickle.dump(metadata, f)
+
         return target_path
 
     def _create_deterministic_static_features(self, temp_dir: str) -> str:
@@ -1737,3 +1782,217 @@ class TestTrafficDataset:
         df.to_parquet(neighbor_path)
 
         return neighbor_path
+
+
+class TestVelocityTarget:
+    """Test suite for the include_velocity_target feature."""
+
+    @pytest.fixture
+    def velocity_target_setup(self):
+        """Set up test data with velocity target enabled."""
+        temp_dir = tempfile.mkdtemp()
+        generator = TestDataGenerator(num_nodes=10, num_timesteps=50)
+
+        graph_path = generator.create_graph(temp_dir)
+        static_path = generator.create_static_features(temp_dir)
+
+        # Create dynamic feature files
+        dynamic_paths = []
+        metadata_paths = []
+
+        h5_path, meta_path = generator.create_dynamic_features(
+            temp_dir, "coi_points", ["coi_puntos"]
+        )
+        dynamic_paths.append(h5_path)
+        metadata_paths.append(meta_path)
+
+        # Create target data WITH velocity
+        target_path = generator.create_target_data(temp_dir, include_velocity=True)
+
+        setup_data = {
+            "temp_dir": temp_dir,
+            "graph_path": graph_path,
+            "static_path": static_path,
+            "dynamic_paths": dynamic_paths,
+            "metadata_paths": metadata_paths,
+            "target_path": target_path,
+            "generator": generator,
+        }
+
+        yield setup_data
+
+        shutil.rmtree(temp_dir)
+
+    @pytest.fixture
+    def single_target_setup(self):
+        """Set up test data with only jam level target (no velocity)."""
+        temp_dir = tempfile.mkdtemp()
+        generator = TestDataGenerator(num_nodes=10, num_timesteps=50)
+
+        graph_path = generator.create_graph(temp_dir)
+        static_path = generator.create_static_features(temp_dir)
+
+        dynamic_paths = []
+        metadata_paths = []
+
+        h5_path, meta_path = generator.create_dynamic_features(
+            temp_dir, "coi_points", ["coi_puntos"]
+        )
+        dynamic_paths.append(h5_path)
+        metadata_paths.append(meta_path)
+
+        # Create target data WITHOUT velocity
+        target_path = generator.create_target_data(temp_dir, include_velocity=False)
+
+        setup_data = {
+            "temp_dir": temp_dir,
+            "graph_path": graph_path,
+            "static_path": static_path,
+            "dynamic_paths": dynamic_paths,
+            "metadata_paths": metadata_paths,
+            "target_path": target_path,
+            "generator": generator,
+        }
+
+        yield setup_data
+
+        shutil.rmtree(temp_dir)
+
+    def test_velocity_target_disabled_default(self, single_target_setup):
+        """Test that velocity target is disabled by default."""
+        setup = single_target_setup
+
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=10,
+            out_timesteps=5,
+            future_features=["coi_puntos"],
+            node_batch_size=5,
+            node_seed="node_0",
+        )
+
+        assert dataset.include_velocity_target is False
+        assert dataset.num_target_features == 1
+        assert dataset.target_velocity_idx is None
+
+        # Check y shape in samples
+        sample = dataset[0]
+        assert isinstance(sample.y, torch.Tensor)
+        assert sample.y.shape == (5, 5)  # (batch_size, out_timesteps)
+
+    def test_velocity_target_enabled(self, velocity_target_setup):
+        """Test velocity target when explicitly enabled."""
+        setup = velocity_target_setup
+
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=10,
+            out_timesteps=5,
+            future_features=["coi_puntos"],
+            node_batch_size=5,
+            node_seed="node_0",
+            include_velocity_target=True,
+        )
+
+        assert dataset.include_velocity_target is True
+        assert dataset.num_target_features == 2
+        assert dataset.target_velocity_idx is not None
+        assert dataset.target_level_idx is not None
+
+        # Check y shape in samples - should be 3D now
+        sample = dataset[0]
+        assert isinstance(sample.y, torch.Tensor)
+        assert sample.y.shape == (5, 5, 2)  # (batch_size, out_timesteps, 2)
+
+    def test_velocity_target_values_populated(self, velocity_target_setup):
+        """Test that both jam level and velocity values are correctly populated."""
+        setup = velocity_target_setup
+
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=10,
+            out_timesteps=5,
+            future_features=["coi_puntos"],
+            node_batch_size=5,
+            node_seed="node_0",
+            include_velocity_target=True,
+        )
+
+        # Get multiple samples and check that y has non-zero values
+        has_level_values = False
+        has_velocity_values = False
+
+        for i in range(min(10, len(dataset))):
+            sample = dataset[i]
+            assert isinstance(sample.y, torch.Tensor)
+            # Check jam level (index 0)
+            if sample.y[:, :, 0].abs().sum() > 0:
+                has_level_values = True
+            # Check velocity (index 1)
+            if sample.y[:, :, 1].abs().sum() > 0:
+                has_velocity_values = True
+
+            if has_level_values and has_velocity_values:
+                break
+
+        assert has_level_values, "No jam level values found in target"
+        assert has_velocity_values, "No velocity values found in target"
+
+    def test_velocity_target_error_when_missing(self, single_target_setup):
+        """Test that enabling velocity target without velocity data raises an error."""
+        setup = single_target_setup
+
+        with pytest.raises(ValueError, match="mean_jam_velocity.*not found"):
+            TrafficDataset(
+                graph_path=setup["graph_path"],
+                static_data_path=setup["static_path"],
+                dynamic_data_paths=setup["dynamic_paths"],
+                metadata_paths=setup["metadata_paths"],
+                target_data_path=setup["target_path"],
+                in_timesteps=10,
+                out_timesteps=5,
+                future_features=["coi_puntos"],
+                node_batch_size=5,
+                node_seed="node_0",
+                include_velocity_target=True,  # Should fail
+            )
+
+    def test_target_data_with_velocity_can_still_use_level_only(
+        self, velocity_target_setup
+    ):
+        """Test that target data with velocity can still be used with velocity disabled."""
+        setup = velocity_target_setup
+
+        # Even though target data has velocity, we should be able to use only level
+        dataset = TrafficDataset(
+            graph_path=setup["graph_path"],
+            static_data_path=setup["static_path"],
+            dynamic_data_paths=setup["dynamic_paths"],
+            metadata_paths=setup["metadata_paths"],
+            target_data_path=setup["target_path"],
+            in_timesteps=10,
+            out_timesteps=5,
+            future_features=["coi_puntos"],
+            node_batch_size=5,
+            node_seed="node_0",
+            include_velocity_target=False,  # Explicitly disabled
+        )
+
+        assert dataset.include_velocity_target is False
+        assert dataset.num_target_features == 1
+
+        sample = dataset[0]
+        assert isinstance(sample.y, torch.Tensor)
+        assert sample.y.shape == (5, 5)  # 2D, not 3D
