@@ -103,7 +103,7 @@ class JamsProcessor:
             mvi["mviciv"].astype(str) + "_" + mvi["mvisvia"].str.replace(" ", "")
         )
         mvi["contador"] = mvi.groupby("id_mvi").cumcount() + 1
-        mvi["road_id"] = mvi["id_mvi"] + "." + mvi["contador"].astype(str)
+        mvi["road_id"] = mvi["id_mvi"].astype(str) + "." + mvi["contador"].astype(str)
 
         # Transform to projected CRS and create buffers
         mvi_buffered = mvi.to_crs(self.target_crs).copy()
@@ -333,7 +333,7 @@ class JamsProcessor:
                 - count_jams: Number of jams in this timeframe
         """
         # Create timeframe bins
-        jams_gdf["timeframe"] = jams_gdf["timestamp_pubMillis"].dt.floor(
+        jams_gdf["timeframe"] = jams_gdf["timestamp_pubMillis"].dt.floor(  # type: ignore
             self.temporal_resolution
         )
 

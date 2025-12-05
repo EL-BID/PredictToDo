@@ -102,7 +102,7 @@ class BuildingsProcessor:
         )
         roads_gdf["contador"] = roads_gdf.groupby("id_mvi").cumcount() + 1
         roads_gdf["id_mvi"] = (
-            roads_gdf["id_mvi"] + "." + roads_gdf["contador"].astype(str)
+            roads_gdf["id_mvi"].astype(str) + "." + roads_gdf["contador"].astype(str)
         )
 
         # Dissolve split segments into unified roads

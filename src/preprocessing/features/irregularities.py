@@ -181,7 +181,7 @@ class IrregularitiesProcessor:
             mvi["mviciv"].astype(str) + "_" + mvi["mvisvia"].str.replace(" ", "")
         )
         mvi["contador"] = mvi.groupby("id_mvi").cumcount() + 1
-        mvi["id_mvi"] = mvi["id_mvi"] + "." + mvi["contador"].astype(str)
+        mvi["id_mvi"] = mvi["id_mvi"].astype(str) + "." + mvi["contador"].astype(str)
 
         # Transform to projected CRS for accurate buffering
         mvi_buffered = mvi.to_crs("EPSG:3116").copy()
@@ -406,7 +406,7 @@ class IrregularitiesProcessor:
             irreg_gdf_exploded["piece_duration"] / irreg_gdf_exploded["orig_duration"]
         )
         irreg_gdf_exploded["piece_duration_mins"] = (
-            irreg_gdf_exploded["piece_duration"].dt.total_seconds().div(60)
+            irreg_gdf_exploded["piece_duration"].dt.total_seconds().div(60)  # type: ignore
         )
 
         # Clean up and rename columns
@@ -487,7 +487,7 @@ class IrregularitiesProcessor:
         # Create timeframe buckets (floor to 15-minute intervals)
         irregs_intersections["timeframe"] = irregs_intersections[
             "timestamp_startTime_ts_cot"
-        ].dt.floor(self.temporal_resolution)
+        ].dt.floor(self.temporal_resolution)  # type: ignore
 
         return irregs_intersections
 

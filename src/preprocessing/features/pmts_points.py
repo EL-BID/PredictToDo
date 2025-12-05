@@ -124,7 +124,7 @@ class PMTSPointsProcessor:
             mvi["mviciv"].astype(str) + "_" + mvi["mvisvia"].str.replace(" ", "")
         )
         mvi["contador"] = mvi.groupby("id_mvi").cumcount() + 1
-        mvi["id_mvi"] = mvi["id_mvi"] + "." + mvi["contador"].astype(str)
+        mvi["id_mvi"] = mvi["id_mvi"].astype(str) + "." + mvi["contador"].astype(str)
 
         # Buffer roads in projected CRS for accurate distance
         mvi_buffered = mvi.to_crs(self.target_crs).copy()
@@ -544,7 +544,7 @@ class PMTSPointsProcessor:
 
         # Explode and aggregate
         coi_parques_work = coi_parques_work.explode("time_slots").reset_index(drop=True)
-        coi_parques_work["timeframe"] = coi_parques_work["time_slots"].dt.strftime(
+        coi_parques_work["timeframe"] = coi_parques_work["time_slots"].dt.strftime(  # type: ignore
             "%Y-%m-%d %H:%M:%S"
         )
 
@@ -653,7 +653,7 @@ class PMTSPointsProcessor:
             ).reset_index(drop=True)
             coi_puntos_work_current["timeframe"] = coi_puntos_work_current[
                 "time_slots"
-            ].dt.strftime("%Y-%m-%d %H:%M:%S")
+            ].dt.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore
 
             coi_puntos_dataset = (
                 coi_puntos_work_current.groupby(["road_id", "timeframe"])

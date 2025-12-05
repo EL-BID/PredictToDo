@@ -110,7 +110,7 @@ class RoadStateProcessor:
             mvi["MVICIV"].astype(str) + "_" + mvi["MVISVIA"].str.replace(" ", "")
         )
         mvi["contador"] = mvi.groupby("id_mvi").cumcount() + 1
-        mvi["id_mvi"] = mvi["id_mvi"] + "." + mvi["contador"].astype(str)
+        mvi["id_mvi"] = mvi["id_mvi"].astype(str) + "." + mvi["contador"].astype(str)
 
         # Dissolve split segments into unified roads
         mvi = (

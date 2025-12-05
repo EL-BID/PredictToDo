@@ -112,7 +112,7 @@ class PMTSTractsProcessor:
             mvi["mviciv"].astype(str) + "_" + mvi["mvisvia"].str.replace(" ", "")
         )
         mvi["contador"] = mvi.groupby("id_mvi").cumcount() + 1
-        mvi["id_mvi"] = mvi["id_mvi"] + "." + mvi["contador"].astype(str)
+        mvi["id_mvi"] = mvi["id_mvi"].astype(str) + "." + mvi["contador"].astype(str)
 
         # Transform to projected CRS and create buffers
         mvi_buffered = mvi.to_crs(self.target_crs).copy()
@@ -622,7 +622,7 @@ class PMTSTractsProcessor:
             ).reset_index(drop=True)
             coi_tramo_work_current["timeframe"] = coi_tramo_work_current[
                 "time_slots"
-            ].dt.strftime("%Y-%m-%d %H:%M:%S")
+            ].dt.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore
 
             # Aggregate by road and timeframe
             coi_tramo_dataset = (
@@ -704,7 +704,7 @@ class PMTSTractsProcessor:
         # Explode time slots
         print("\n[4/5] Exploding time slots...")
         coos_punto_work = coos_punto_work.explode("time_slots").reset_index(drop=True)
-        coos_punto_work["timeframe"] = coos_punto_work["time_slots"].dt.strftime(
+        coos_punto_work["timeframe"] = coos_punto_work["time_slots"].dt.strftime(  # type: ignore
             "%Y-%m-%d %H:%M:%S"
         )
 
