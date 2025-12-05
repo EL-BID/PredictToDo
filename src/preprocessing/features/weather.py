@@ -105,7 +105,7 @@ class WeatherProcessor:
         df["timestamp"] = pd.to_datetime(df["timestamp"], format="%d-%m-%Y %H:%M:%S")
 
         # Filter for target year
-        time_filter = df.timestamp.dt.year == self.target_year
+        time_filter = df.timestamp.dt.year == self.target_year  # type: ignore
         df = df[time_filter]
 
         # Aggregate to specified temporal resolution using groupby
@@ -165,7 +165,7 @@ class WeatherProcessor:
             mvi["MVICIV"].astype(str) + "_" + mvi["MVISVIA"].str.replace(" ", "")
         )
         mvi["contador"] = mvi.groupby("id_mvi").cumcount() + 1
-        mvi["id_mvi"] = mvi["id_mvi"] + "." + mvi["contador"].astype(str)
+        mvi["id_mvi"] = mvi["id_mvi"].astype(str) + "." + mvi["contador"].astype(str)
 
         # Dissolve split segments into unified roads
         mvi = (

@@ -87,7 +87,7 @@ class IncidentsProcessor:
         )
         roads_gdf["contador"] = roads_gdf.groupby("id_mvi").cumcount() + 1
         roads_gdf["id_mvi"] = (
-            roads_gdf["id_mvi"] + "." + roads_gdf["contador"].astype(str)
+            roads_gdf["id_mvi"].astype(str) + "." + roads_gdf["contador"].astype(str)
         )
 
         # Dissolve split segments
@@ -180,7 +180,7 @@ class IncidentsProcessor:
         )
 
         # Align to temporal resolution (default: 15-minute intervals)
-        joined["timeframe"] = joined["closing_date"].dt.floor(self.temporal_resolution)
+        joined["timeframe"] = joined["closing_date"].dt.floor(self.temporal_resolution)  # type: ignore
 
         print(f"  Assigned {len(joined)} incidents to road segments")
         return joined
