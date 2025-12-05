@@ -562,10 +562,12 @@ if __name__ == "__main__":
     jams_df = pd.concat(
         [pd.read_parquet(f) for f in jams_filenames],
         ignore_index=False,
-    ).fillna(0)[["road_id", "timeframe", "level_mean"]]
+    ).fillna(0)[["road_id", "timeframe", "level_mean", "vel_mean"]]
 
     dataset_generator.temporal_dataframe_to_coo(
-        jams_df.rename(columns={"level_mean": "mean_jam_level"}),
+        jams_df.rename(
+            columns={"level_mean": "mean_jam_level", "vel_mean": "mean_jam_velocity"}
+        ),
         output_path=f"{processed_data_dir}/sparse_datasets/jams_dataset.h5",
         has_index=False,
         node_col="road_id",
