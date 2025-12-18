@@ -14,7 +14,7 @@ This will execute all preprocessing steps in the correct order and produce a rea
 
 ## Pipeline Overview
 
-The script executes four main steps:
+The script executes five main steps:
 
 ### Step 1: Feature Generation
 
@@ -132,14 +132,42 @@ Output files in `data/datos_procesados/sparse_datasets/`:
 - `jam_level_count_dataset.h5` + metadata
 - Weather data files
 
-### Step 4: Dataset Instantiation
+### Step 4: Normalization
+
+Computes robust normalization constants for all features:
+
+- **Percentile-based normalization**: Uses 99th percentile of absolute values to determine scale
+- **Outlier handling**: Values beyond the percentile are clipped to prevent loss of resolution
+- **Feature-wise constants**: Each feature gets its own normalization constant
+- **Comprehensive coverage**: Normalizes static features, dynamic features, targets, and weather data
+
+Output files in `data/datos_procesados/sparse_datasets/`:
+- `normalization_constants.pkl` - Dictionary of normalization constants
+- `normalization_constants_summary.txt` - Human-readable summary of all constants
+
+**Important:** This step must run AFTER dataset merging (needs HDF5 files) but BEFORE dataset instantiation.
+
+**Usage:**
+```bash
+python -m src.preprocessing.normalize
+```
+
+**How it works:**
+- For each feature, computes the 99th percentile of absolute values
+- This becomes the normalization constant for that feature
+- During training, features are divided by their constant and clipped to [-1, 1]
+- Ensures all features have similar scales without losing resolution due to outliers
+
+### Step 5: Dataset Instantiation
 
 Creates and pickles the final `TrafficDataset` object:
 
 - Loads all HDF5 files
+- Loads normalization constants
 - Configures time windows (150 input, 50 output timesteps)
 - Sets up weather integration
 - Configures imputation features
+- Applies normalization during data loading
 - Output: `traffic_dataset.pkl`
 
 ## Configuration
@@ -212,7 +240,9 @@ data/datos_procesados/
 ├── sparse_datasets/
 │   ├── static_dataset.h5
 │   ├── *_dataset.h5 (multiple HDF5 files)
-│   └── *_metadata.pkl (metadata files)
+│   ├── *_metadata.pkl (metadata files)
+│   ├── normalization_constants.pkl
+│   └── normalization_constants_summary.txt
 ├── neighbor_features.parquet
 └── traffic_dataset.pkl  # Final dataset
 ```
@@ -242,11 +272,12 @@ dataloader = DataLoader(
 # Start training
 for batch in dataloader:
     # Your training loop here
-    x_static = batch.x_static          # Static node features
-    x_dynamic_past = batch.x_dynamic_past    # Historical dynamic features
-    x_dynamic_future = batch.x_dynamic_future  # Future known features
-    x_weather = batch.x_weather        # Weather features
-    y = batch.y                        # Target (jam levels)
+    # All features are automatically normalized to [-1, 1]
+    x_static = batch.x_static          # Static node features (normalized)
+    x_dynamic_past = batch.x_dynamic_past    # Historical dynamic features (normalized)
+    x_dynamic_future = batch.x_dynamic_future  # Future known features (normalized)
+    x_weather = batch.x_weather        # Weather features (normalized)
+    y = batch.y                        # Target (jam levels, normalized)
     edge_index = batch.edge_index      # Graph connectivity
     # ... model forward pass ...
 ```
