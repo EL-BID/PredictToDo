@@ -2,7 +2,17 @@
 
 This guide explains how to prepare the complete dataset for the traffic forecasting model using the automated pipeline.
 
-## Quick Start
+## Table of Contents
+- [Training Pipeline](#training-pipeline)
+  - [Quick Start](#quick-start)
+  - [Pipeline Overview](#pipeline-overview)
+- [Inference Pipeline](#inference-pipeline)
+  - [Quick Start](#inference-quick-start)
+  - [Usage](#inference-usage)
+
+## Training Pipeline
+
+### Quick Start
 
 To prepare the entire dataset, simply run:
 
@@ -282,6 +292,199 @@ for batch in dataloader:
     # ... model forward pass ...
 ```
 
+## Inference Pipeline
+
+The inference pipeline processes real-time data and generates predictions.
+
+**Key Components:**
+- **InferenceDataLoader** (`src/inference_dataloader.py`) - Main class for loading and processing real-time data
+- **Production Script** (`src/inference_production.py`) - Production-ready inference with logging and monitoring
+
+### Quick Start
+
+#### Run Basic Inference Example
+```bash
+uv run python -m src.inference_dataloader
+```
+
+#### Production Inference
+```bash
+uv run python -m src.inference_production \
+  --mode single \
+  --graph data/datos_procesados/conectivity_graph/road_graph.pickle \
+  --static data/datos_procesados/sparse_datasets/static_dataset.h5 \
+  --norm data/datos_procesados/sparse_datasets/normalization_constants.pkl \
+  --jams data/inference_tests/df_jams_test.parquet \
+  --irregularities data/inference_tests/df_irregularidades_test.parquet \
+  --weather data/inference_tests/df_clima_test.parquet \
+  --pmt-puntos data/inference_tests/df_pmt_puntos_test.parquet \
+  --pmt-tramos data/inference_tests/df_pmt_tramos_test.parquet
+```
+
+### Basic Usage
+
+```python
+from src.inference_dataloader import InferenceDataLoader
+import torch
+
+# Initialize the inference DataLoader
+loader = InferenceDataLoader(
+    graph_path="data/datos_procesados/conectivity_graph/road_graph.pickle",
+    static_data_path="data/datos_procesados/sparse_datasets/static_dataset.h5",
+    in_timesteps=150,  # 37.5 hours of input
+    out_timesteps=50,   # 12.5 hours of prediction
+    node_batch_size=500,
+    normalization_constants_path="data/datos_procesados/sparse_datasets/normalization_constants.pkl",
+    use_ray=False,  # Set to True for parallel processing
+)
+
+# Load real-time data and prepare batches
+batches = loader.load_and_prepare_batch(
+    jams_path="data/inference_tests/df_jams_test.parquet",
+    irregularities_path="data/inference_tests/df_irregularidades_test.parquet",
+    weather_path="data/inference_tests/df_clima_test.parquet",
+    pmt_puntos_path="data/inference_tests/df_pmt_puntos_test.parquet",
+    pmt_tramos_path="data/inference_tests/df_pmt_tramos_test.parquet",
+)
+
+# Make predictions with your model
+model = YourModel.load("path/to/model.pth")
+model.eval()
+
+with torch.no_grad():
+    batch = batches[0]
+    predictions = model(
+        x_static=batch.x_static.unsqueeze(0),
+        x_dynamic_past=batch.x_dynamic_past.unsqueeze(0),
+        x_dynamic_future=batch.x_dynamic_future.unsqueeze(0),
+        x_weather=batch.x_weather.unsqueeze(0),
+        edge_index=batch.edge_index,
+    )
+
+loader.cleanup()
+```
+
+### Key Features
+
+- **Real-time Processing**: Loads data from parquet files (jams, irregularities, weather, PMTs)
+- **Automatic Alignment**: Aligns real-time data with graph nodes and time windows
+- **Missing Data Handling**: Gracefully handles missing features (events, incidents set to 0)
+- **Normalization**: Applies the same normalization as training
+- **Ray Support**: Optional parallel processing for faster inference
+- **Memory Efficient**: Node batching to control memory usage
+
+### Batch Structure
+
+Each batch contains:
+```
+- x_static: (num_nodes, 117) - Static road features
+- x_dynamic_past: (num_nodes, 150, 64) - Historical features
+  * Jams: 10 features (velocity, level, delay stats)
+  * Irregularities: 42 features (Waze data)
+  * PMTs: 4 features (traffic management plans)
+  * Events: 3 features (placeholder, set to 0)
+  * Incidents: 5 features (placeholder, set to 0)
+- x_dynamic_future: (num_nodes, 50, 4) - Known future features
+  * PMTs only: coi_parques, coi_puntos, coi_tramo, coos_punto
+- x_weather: (num_nodes, 150, 4) - Weather features
+  * wind_direction, humidity, wind_speed, precipitation
+- edge_index: (2, num_edges) - Graph connectivity
+```
+
+### Data Format Requirements
+
+Real-time data must be in parquet format:
+
+| File | Required Columns | Description |
+|------|-----------------|-------------|
+| `df_jams_test.parquet` | `id_mvi`, `timeframe`, vel/level/delay stats | Traffic jam data |
+| `df_irregularidades_test.parquet` | `id_mvi`, `timeframe`, Waze features | Traffic irregularities |
+| `df_clima_test.parquet` | `tipo_sensor`, `IDSENSOR`, `VALORLECTURA_mean`, `timestamp_local` | Weather data |
+| `df_pmt_puntos_test.parquet` | `road_id`, `timeframe`, `coi_parques`, `coi_puntos` | Traffic management (points) |
+| `df_pmt_tramos_test.parquet` | `road_id`, `timeframe`, `coi_tramo`, `coos_punto` | Traffic management (tracts) |
+
+**Important Notes:**
+- `id_mvi` and `road_id` must match graph node IDs
+- `timeframe` should be in ISO format or parseable by pandas
+- `timestamp_local` uses format `YYYYMMDD_HHMM`
+
+### Performance Considerations
+
+#### Sequential vs. Ray Processing
+
+**Sequential (Default)**
+- No extra dependencies
+- Simpler error handling
+- Better for small datasets (<1GB)
+- Lower overhead
+
+**Ray Parallel** (Enable with `use_ray=True`)
+- Faster for large datasets
+- Parallelizes file loading and processing
+- Requires: `uv add ray`
+- Higher memory usage
+- Best for production environments
+
+#### Memory Management
+
+For large-scale inference:
+```python
+# Process specific roads instead of all nodes
+important_roads = ["0_FT.5", "0_FT.10", ...]
+batches = loader.load_and_prepare_batch(
+    ...,
+    node_seeds=important_roads,
+)
+
+# Or reduce batch size
+loader = InferenceDataLoader(..., node_batch_size=100)
+```
+
+### Integration Patterns
+
+#### Real-Time Streaming
+```python
+import time
+
+loader = InferenceDataLoader(...)
+
+while True:
+    time.sleep(900)  # Wait 15 minutes
+    latest_files = get_latest_data_files()
+    batches = loader.load_and_prepare_batch(**latest_files)
+    predictions = model(batches[0])
+    save_predictions(predictions)
+```
+
+#### Batch Processing
+```python
+# Process historical data
+for date in date_range:
+    file_paths = get_files_for_date(date)
+    batches = loader.load_and_prepare_batch(**file_paths)
+    predictions = model(batches[0])
+    save_predictions(date, predictions)
+```
+
+### Common Issues & Solutions
+
+| Issue | Solution |
+|-------|----------|
+| FileNotFoundError with Ray | Use absolute paths or set `use_ray=False` |
+| Missing road IDs | Normal - roads not in graph are skipped |
+| Memory errors | Reduce `node_batch_size` or process fewer nodes |
+
+### Differences from Training Pipeline
+
+| Aspect | Training | Inference |
+|--------|----------|-----------|
+| Data Source | HDF5 sparse matrices | Parquet files |
+| Target Variable | Required (jam levels) | Not needed |
+| Time Window | Sliding windows over historical data | Latest available data |
+| Events/Incidents | Full historical data | Set to 0 (not yet available) |
+| Batching | All nodes via seeds | Configurable node subsets |
+| Performance | Optimized for throughput | Optimized for latency |
+
 ## Troubleshooting
 
 ### Missing Data Files
@@ -309,7 +512,7 @@ If `uv` is not installed in your machine, just install it with
 pip install uv
 ```
 
-<!-- ## Setting up the environment
+## Troubleshooting
 - If `uv` is not installed in your machine, just install it with `pip install uv`.
 - All the necessary Python packages must be installed. This is done by executing `uv sync`.
 - Then, the correct environment variables must be set. See `.env.example` for an example.
