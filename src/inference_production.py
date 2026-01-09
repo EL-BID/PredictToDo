@@ -78,6 +78,7 @@ class InferencePipeline:
         pmt_puntos_path: str,
         pmt_tramos_path: str,
         events_path: str,
+        incidents_path: str,
         output_path: Optional[str] = None,
     ) -> dict:
         """
@@ -101,6 +102,7 @@ class InferencePipeline:
                 pmt_puntos_path=pmt_puntos_path,
                 pmt_tramos_path=pmt_tramos_path,
                 events_path=events_path,
+                incidents_path=incidents_path,
             )
 
             load_time = time.time() - load_start
@@ -217,6 +219,7 @@ class InferencePipeline:
                     pmt_puntos_path=str(data_path / f"pmt_puntos_{base_name}.parquet"),
                     pmt_tramos_path=str(data_path / f"pmt_tramos_{base_name}.parquet"),
                     events_path=str(data_path / f"eventos_{base_name}.parquet"),
+                    incidents_path=str(data_path / f"incidentes_{base_name}.parquet"),
                     output_path=str(output_path / f"predictions_{base_name}.npy"),
                 )
 
@@ -283,6 +286,7 @@ def main():
     parser.add_argument("--pmt-puntos", help="Path to PMT points parquet")
     parser.add_argument("--pmt-tramos", help="Path to PMT tracts parquet")
     parser.add_argument("--events", help="Path to events parquet")
+    parser.add_argument("--incidents", help="Path to incidents parquet")
     parser.add_argument("--output", help="Output path for predictions")
 
     # Batch mode arguments
@@ -315,6 +319,8 @@ def main():
                     args.weather,
                     args.pmt_puntos,
                     args.pmt_tramos,
+                    args.events,
+                    args.incidents,
                 ]
             ):
                 parser.error("Single mode requires all data file paths")
@@ -326,6 +332,7 @@ def main():
                 pmt_puntos_path=args.pmt_puntos,
                 pmt_tramos_path=args.pmt_tramos,
                 events_path=args.events,
+                incidents_path=args.incidents,
                 output_path=args.output,
             )
 
@@ -371,6 +378,8 @@ if __name__ == "__main__":
         "data/inference_tests/df_pmt_tramos_test.parquet",
         "--events",
         "data/inference_tests/df_eventos_test.parquet",
+        "--incidents",
+        "data/inference_tests/df_incidentes_test.parquet",
     ]
 
     main()
