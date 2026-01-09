@@ -9,7 +9,7 @@ Key differences from training DataLoader:
 1. No target data (y) - used for prediction only
 2. Loads data from real-time parquet files instead of HDF5
 3. Uses Ray for parallel processing of data sources
-4. Handles missing features gracefully (events, incidents)
+4. Handles missing features gracefully (incidents)
 5. Focuses on latest time window for inference
 """
 
@@ -39,7 +39,7 @@ class InferenceDataLoader:
 
     This class:
     - Loads real-time data from parquet files (jams, irregularities, weather, PMTs)
-    - Handles missing features (events, incidents set to 0)
+    - Handles missing features (incidents set to 0)
     - Uses the same graph structure and static features as training
     - Supports Ray parallelization for faster data processing
     - Generates batches compatible with the trained model
@@ -182,6 +182,7 @@ class InferenceDataLoader:
         weather_path: str,
         pmt_puntos_path: str,
         pmt_tramos_path: str,
+        events_path: str,
         node_seeds: Optional[list[str]] = None,
         current_timestamp: Optional[pd.Timestamp] = None,
     ) -> list[Data]:
@@ -194,6 +195,7 @@ class InferenceDataLoader:
             weather_path: Path to weather parquet file
             pmt_puntos_path: Path to PMT points parquet file
             pmt_tramos_path: Path to PMT tracts parquet file
+            events_path: Path to events parquet file
             node_seeds: List of seed nodes for batching (if None, use all nodes)
             current_timestamp: Current timestamp for inference (if None, use latest)
 
@@ -208,6 +210,7 @@ class InferenceDataLoader:
                 weather_path,
                 pmt_puntos_path,
                 pmt_tramos_path,
+                events_path,
             )
         else:
             data_dict = self._load_data_sequential(
@@ -216,6 +219,7 @@ class InferenceDataLoader:
                 weather_path,
                 pmt_puntos_path,
                 pmt_tramos_path,
+                events_path,
             )
 
         # Determine time window
@@ -238,6 +242,7 @@ class InferenceDataLoader:
         weather_path: str,
         pmt_puntos_path: str,
         pmt_tramos_path: str,
+        events_path: str,
     ) -> dict[str, pd.DataFrame]:
         """Load data in parallel using Ray."""
 
@@ -249,6 +254,7 @@ class InferenceDataLoader:
         weather_path = str(Path(weather_path).resolve())
         pmt_puntos_path = str(Path(pmt_puntos_path).resolve())
         pmt_tramos_path = str(Path(pmt_tramos_path).resolve())
+        events_path = str(Path(events_path).resolve())
 
         @ray.remote
         def load_parquet(path: str) -> pd.DataFrame:
@@ -264,6 +270,7 @@ class InferenceDataLoader:
             "weather": load_parquet.remote(weather_path),
             "pmt_puntos": load_parquet.remote(pmt_puntos_path),
             "pmt_tramos": load_parquet.remote(pmt_tramos_path),
+            "events": load_parquet.remote(events_path),
         }
 
         # Collect results
@@ -278,6 +285,7 @@ class InferenceDataLoader:
         weather_path: str,
         pmt_puntos_path: str,
         pmt_tramos_path: str,
+        events_path: str,
     ) -> dict[str, pd.DataFrame]:
         """Load data sequentially (fallback when Ray is not available)."""
         data_dict = {
@@ -287,6 +295,9 @@ class InferenceDataLoader:
             "pmt_puntos": pd.read_parquet(pmt_puntos_path),
             "pmt_tramos": pd.read_parquet(pmt_tramos_path),
         }
+
+        data_dict["events"] = pd.read_parquet(events_path)
+
         return data_dict
 
     def _get_latest_timestamp(self, data_dict: dict[str, pd.DataFrame]) -> pd.Timestamp:
@@ -322,6 +333,13 @@ class InferenceDataLoader:
                 if ts.tz is not None:
                     ts = ts.tz_localize(None)
                 timestamps.append(ts)
+
+        # Events
+        if "timeframe" in data_dict["events"].columns:
+            ts = pd.to_datetime(data_dict["events"]["timeframe"]).max()
+            if ts.tz is not None:
+                ts = ts.tz_localize(None)
+            timestamps.append(ts)
 
         return max(timestamps)
 
@@ -405,8 +423,13 @@ class InferenceDataLoader:
             future_time_index,
         )
 
-        # Placeholder for events and incidents (set to 0)
-        events_features = self._create_zero_features(time_index, num_features=3)
+        # Process events
+        events_features = self._process_events(
+            data_dict["events"],
+            time_index,
+        )
+
+        # Placeholder for incidents (set to 0)
         incidents_features = self._create_zero_features(time_index, num_features=5)
 
         # Concatenate all past features
@@ -491,8 +514,13 @@ class InferenceDataLoader:
         irreg_features = ray.get(irreg_future)
         weather_features = ray.get(weather_future)
 
-        # Placeholder for events and incidents
-        events_features = self._create_zero_features(time_index, num_features=3)
+        # Process events
+        events_features = self._process_events(
+            data_dict["events"],
+            time_index,
+        )
+
+        # Placeholder for incidents
         incidents_features = self._create_zero_features(time_index, num_features=5)
 
         # Concatenate all past features
@@ -634,6 +662,82 @@ class InferenceDataLoader:
                 continue
 
             for feat_idx, col in enumerate(feature_cols):
+                value = row.get(col, 0)
+                if pd.notna(value):
+                    tensor[node_idx, time_idx, feat_idx] = float(value)
+
+        return tensor
+
+    def _process_events(
+        self, df: pd.DataFrame, time_index: pd.DatetimeIndex
+    ) -> torch.Tensor:
+        """Process events data into tensor format."""
+        return self._process_events_static(
+            df, time_index, self.node_to_id, self.num_nodes
+        )
+
+    @staticmethod
+    def _process_events_static(
+        df: pd.DataFrame,
+        time_index: pd.DatetimeIndex,
+        node_to_id: dict[str, int],
+        num_nodes: int,
+    ) -> torch.Tensor:
+        """Static method for processing events data."""
+        # Determine the road id column name (can be 'road_id' or 'id_vial')
+        road_id_col = None
+        for col in ["road_id", "id_vial"]:
+            if col in df.columns:
+                road_id_col = col
+                break
+
+        if road_id_col is None:
+            # No road id column found, return zeros
+            return torch.zeros(num_nodes, len(time_index), 3)
+
+        # Use all columns except road_id and timeframe
+        exclude_cols = {road_id_col, "timeframe"}
+        feature_cols = [col for col in df.columns if col not in exclude_cols]
+
+        # If no feature columns, return zeros
+        if not feature_cols:
+            num_features = 3  # Default to 3 features
+        else:
+            num_features = min(
+                len(feature_cols), 3
+            )  # Limit to 3 features to match architecture
+
+        num_timesteps = len(time_index)
+
+        # Initialize tensor
+        tensor = torch.zeros(num_nodes, num_timesteps, num_features)
+
+        # Convert timeframe to datetime
+        df = df.copy()
+        df["timeframe"] = pd.to_datetime(df["timeframe"])
+
+        # Filter to time window
+        df = df[df["timeframe"].isin(time_index)]
+
+        if len(df) == 0:
+            return tensor
+
+        # Create time index mapping
+        time_to_idx = {t: i for i, t in enumerate(time_index)}
+
+        # Populate tensor
+        for _, row in df.iterrows():
+            road_id = row.get(road_id_col)
+            if road_id is None or road_id not in node_to_id:
+                continue
+
+            node_idx = node_to_id[road_id]
+            time_idx = time_to_idx.get(row["timeframe"])
+
+            if time_idx is None:
+                continue
+
+            for feat_idx, col in enumerate(feature_cols[:num_features]):
                 value = row.get(col, 0)
                 if pd.notna(value):
                     tensor[node_idx, time_idx, feat_idx] = float(value)
@@ -930,6 +1034,7 @@ if __name__ == "__main__":
     weather_path = str(inference_path / "df_clima_test.parquet")
     pmt_puntos_path = str(inference_path / "df_pmt_puntos_test.parquet")
     pmt_tramos_path = str(inference_path / "df_pmt_tramos_test.parquet")
+    events_path = str(inference_path / "df_eventos_test.parquet")
 
     # Initialize the inference DataLoader
     print("Initializing InferenceDataLoader...")
@@ -956,6 +1061,7 @@ if __name__ == "__main__":
         weather_path=weather_path,
         pmt_puntos_path=pmt_puntos_path,
         pmt_tramos_path=pmt_tramos_path,
+        events_path=events_path,
         node_seeds=None,  # Use all nodes (or specify specific seed nodes)
         current_timestamp=None,  # Use latest timestamp from data
     )
