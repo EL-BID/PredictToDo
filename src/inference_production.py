@@ -19,7 +19,7 @@ from typing import Optional
 import pandas as pd
 import torch
 
-from src.inference_dataloader import InferenceDataLoader
+from inference_dataloader import InferenceDataLoader
 
 # Configure logging
 logging.basicConfig(
@@ -77,6 +77,7 @@ class InferencePipeline:
         weather_path: str,
         pmt_puntos_path: str,
         pmt_tramos_path: str,
+        events_path: str,
         output_path: Optional[str] = None,
     ) -> dict:
         """
@@ -99,6 +100,7 @@ class InferencePipeline:
                 weather_path=weather_path,
                 pmt_puntos_path=pmt_puntos_path,
                 pmt_tramos_path=pmt_tramos_path,
+                events_path=events_path,
             )
 
             load_time = time.time() - load_start
@@ -214,6 +216,7 @@ class InferencePipeline:
                     weather_path=str(data_path / f"clima_{base_name}.parquet"),
                     pmt_puntos_path=str(data_path / f"pmt_puntos_{base_name}.parquet"),
                     pmt_tramos_path=str(data_path / f"pmt_tramos_{base_name}.parquet"),
+                    events_path=str(data_path / f"eventos_{base_name}.parquet"),
                     output_path=str(output_path / f"predictions_{base_name}.npy"),
                 )
 
@@ -279,6 +282,7 @@ def main():
     parser.add_argument("--weather", help="Path to weather parquet")
     parser.add_argument("--pmt-puntos", help="Path to PMT points parquet")
     parser.add_argument("--pmt-tramos", help="Path to PMT tracts parquet")
+    parser.add_argument("--events", help="Path to events parquet")
     parser.add_argument("--output", help="Output path for predictions")
 
     # Batch mode arguments
@@ -321,6 +325,7 @@ def main():
                 weather_path=args.weather,
                 pmt_puntos_path=args.pmt_puntos,
                 pmt_tramos_path=args.pmt_tramos,
+                events_path=args.events,
                 output_path=args.output,
             )
 
@@ -341,4 +346,31 @@ def main():
 
 
 if __name__ == "__main__":
+    import sys
+
+    # Set up command line arguments for testing
+    sys.argv = [
+        "inference_production.py",
+        "--mode",
+        "single",
+        "--graph",
+        "data/datos_procesados/conectivity_graph/road_graph.pickle",
+        "--static",
+        "data/datos_procesados/sparse_datasets/static_dataset.h5",
+        "--norm",
+        "data/datos_procesados/sparse_datasets/normalization_constants.pkl",
+        "--jams",
+        "data/inference_tests/df_jams_test.parquet",
+        "--irregularities",
+        "data/inference_tests/df_irregularidades_test.parquet",
+        "--weather",
+        "data/inference_tests/df_clima_test.parquet",
+        "--pmt-puntos",
+        "data/inference_tests/df_pmt_puntos_test.parquet",
+        "--pmt-tramos",
+        "data/inference_tests/df_pmt_tramos_test.parquet",
+        "--events",
+        "data/inference_tests/df_eventos_test.parquet",
+    ]
+
     main()
