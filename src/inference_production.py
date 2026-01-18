@@ -11,6 +11,7 @@ This script demonstrates best practices for running the inference pipeline in pr
 
 import argparse
 import logging
+import pickle
 import time
 from datetime import datetime
 from pathlib import Path
@@ -51,11 +52,93 @@ class InferencePipeline:
             use_ray=use_ray,
         )
 
+        # Load target normalization constants for de-normalization
+        self.target_norm_constants = self._load_target_norm_constants(
+            normalization_constants_path
+        )
+
         self.model = None
         if model_path:
             self.model = self._load_model(model_path)
 
         logger.info(f"Pipeline initialized with {self.loader.num_nodes} nodes")
+
+    def _load_target_norm_constants(self, norm_path: str) -> dict:
+        """Load target normalization constants for de-normalization."""
+        logger.info(f"Loading normalization constants from {norm_path}")
+        try:
+            with open(norm_path, "rb") as f:
+                norm_constants = pickle.load(f)
+            target_norm = norm_constants.get("target", {})
+            logger.info(
+                f"Loaded target normalization constants: {list(target_norm.keys())}"
+            )
+            return target_norm
+        except Exception as e:
+            logger.warning(f"Could not load normalization constants: {e}")
+            return {}
+
+    def _denormalize_predictions(
+        self,
+        predictions: torch.Tensor,
+        include_velocity: bool = True,
+    ) -> torch.Tensor:
+        """
+        De-normalize predictions to actual values.
+
+        The model outputs normalized predictions (divided by normalization constants).
+        This method reverses that operation to get actual velocity/jam level values.
+
+        Args:
+            predictions: Normalized predictions tensor.
+                If include_velocity=True: shape (batch, timesteps, 2) where
+                    [:, :, 0] = jam_level, [:, :, 1] = velocity
+                If include_velocity=False: shape (batch, timesteps) for jam_level only
+            include_velocity: Whether predictions include velocity (index 1).
+
+        Returns:
+            De-normalized predictions in actual units.
+        """
+        if not self.target_norm_constants:
+            logger.warning(
+                "No target normalization constants available. Returning raw predictions."
+            )
+            return predictions
+
+        denorm_predictions = predictions.clone()
+
+        if include_velocity and denorm_predictions.dim() == 3:
+            # Predictions have shape (batch, timesteps, 2)
+            # De-normalize jam level (index 0)
+            if "mean_jam_level" in self.target_norm_constants:
+                denorm_predictions[:, :, 0] = (
+                    denorm_predictions[:, :, 0]
+                    * self.target_norm_constants["mean_jam_level"]
+                )
+                logger.debug(
+                    f"De-normalized jam_level with constant: {self.target_norm_constants['mean_jam_level']}"
+                )
+
+            # De-normalize velocity (index 1)
+            if "mean_jam_velocity" in self.target_norm_constants:
+                denorm_predictions[:, :, 1] = (
+                    denorm_predictions[:, :, 1]
+                    * self.target_norm_constants["mean_jam_velocity"]
+                )
+                logger.debug(
+                    f"De-normalized velocity with constant: {self.target_norm_constants['mean_jam_velocity']}"
+                )
+        else:
+            # Predictions have shape (batch, timesteps) - only jam level
+            if "mean_jam_level" in self.target_norm_constants:
+                denorm_predictions = (
+                    denorm_predictions * self.target_norm_constants["mean_jam_level"]
+                )
+                logger.debug(
+                    f"De-normalized jam_level with constant: {self.target_norm_constants['mean_jam_level']}"
+                )
+
+        return denorm_predictions
 
     def _load_model(self, model_path: str):
         """Load trained model."""
@@ -115,6 +198,7 @@ class InferencePipeline:
                 inference_start = time.time()
 
                 predictions = []
+                predictions_denorm = []
                 with torch.no_grad():
                     for i, batch in enumerate(batches):
                         logger.debug(f"Processing batch {i + 1}/{len(batches)}")
@@ -127,7 +211,11 @@ class InferencePipeline:
                             edge_index=batch.edge_index,
                         )
 
+                        # De-normalize predictions to actual values
+                        pred_denorm = self._denormalize_predictions(pred)
+
                         predictions.append(pred)
+                        predictions_denorm.append(pred_denorm)
 
                 inference_time = time.time() - inference_start
                 logger.info(f"Inference completed in {inference_time:.2f}s")
@@ -142,12 +230,14 @@ class InferencePipeline:
                 "load_time": load_time,
                 "inference_time": locals().get("inference_time", None),
                 "total_time": total_time,
-                "predictions": predictions,
+                "predictions_normalized": predictions,
+                "predictions": locals().get("predictions_denorm", predictions),
+                "normalization_constants": self.target_norm_constants,
             }
 
-            # Save results if output path provided
-            if output_path and predictions:
-                self._save_predictions(predictions, output_path)
+            # Save results if output path provided (saves de-normalized predictions)
+            if output_path and results["predictions"]:
+                self._save_predictions(results["predictions"], output_path)
 
             logger.info(f"Inference completed successfully in {total_time:.2f}s")
             return results
