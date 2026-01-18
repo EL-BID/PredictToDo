@@ -140,6 +140,7 @@ class TrafficDataset(Dataset):
             "vel_min": "free_flow_speed_mean",
             "vel_mean": "free_flow_speed_mean",
             "vel_max": "free_flow_speed_mean",
+            "mean_jam_velocity": "free_flow_speed_mean",
         }
         self.imputation_features = list(self.imputation_mapping.keys())
         self.imputation_feature_indices: dict[str, dict[str, int]] = {}
@@ -1102,6 +1103,35 @@ class TrafficDataset(Dataset):
                         y[
                             batch_node_indices[level_mask], batch_time_idx[level_mask]
                         ] = torch.from_numpy(batch_values[level_mask]).float()
+
+        # Impute missing velocity values in target using neighbor aggregates
+        if (
+            self.include_velocity_target
+            and self.neighbor_features is not None
+            and "mean_jam_velocity" in self.imputation_mapping
+        ):
+            imputation_col = self.imputation_mapping["mean_jam_velocity"]
+
+            # For each node in the batch, impute missing velocity values
+            for global_node_idx, batch_idx in node_idx_to_batch_idx.items():
+                # Get the node ID from the global node index
+                node_id = self.id_to_node[global_node_idx]
+
+                # Check if this node has neighbor features
+                if node_id not in self.neighbor_features.index:
+                    continue
+
+                # Get the imputation value for this node
+                imputation_value = float(
+                    self.neighbor_features.loc[node_id, imputation_col]  # type: ignore
+                )
+
+                # Find timesteps where velocity is missing (zero) for this node
+                # Velocity is at index 1 in the target tensor
+                missing_mask = y[batch_idx, :, 1] == 0
+
+                # Impute the missing values
+                y[batch_idx, missing_mask, 1] = imputation_value
 
         # Process weather features if enabled
         if (
