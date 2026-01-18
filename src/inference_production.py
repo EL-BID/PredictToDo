@@ -140,7 +140,7 @@ class InferencePipeline:
                 "num_batches": len(batches),
                 "num_nodes": batches[0].num_nodes if batches else 0,
                 "load_time": load_time,
-                "inference_time": inference_time if predictions else None,
+                "inference_time": locals().get("inference_time", None),
                 "total_time": total_time,
                 "predictions": predictions,
             }
