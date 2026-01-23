@@ -1,0 +1,21 @@
+\begin{thebibliography}{1}
+
+\bibitem{seo_gcrn}
+Y.~Seo, M.~Defferrard, P.~Vandergheynst, and X.~Bresson, ``Structured sequence modeling with graph convolutional recurrent networks,'' 2016.
+
+\bibitem{zhao_tgcn}
+L.~Zhao, Y.~Song, C.~Zhang, Y.~Liu, P.~Wang, T.~Lin, M.~Deng, and H.~Li, ``T-gcn: A temporal graph convolutional network for traffic prediction,'' {\em IEEE Transactions on Intelligent Transportation Systems}, vol.~21, pp.~3848--3858, Sept. 2020.
+
+\bibitem{zhu_a3tgcn}
+J.~Zhu, Y.~Song, L.~Zhao, and H.~Li, ``A3t-gcn: Attention temporal graph convolutional network for traffic forecasting,'' 2020.
+
+\bibitem{williams2003modeling}
+B.~Williams and L.~Hoel, ``Modeling and forecasting vehicular traffic flow as a seasonal arima process: Theoretical basis and empirical results,'' {\em Journal of Transportation Engineering}, vol.~129, pp.~664--672, 11 2003.
+
+\bibitem{yao2018deep}
+H.~Yao, F.~Wu, J.~Ke, X.~Tang, Y.~Jia, S.~Lu, P.~Gong, J.~Ye, and Z.~Li, ``Deep multi-view spatial-temporal network for taxi demand prediction,'' 2018.
+
+\bibitem{kipf2016semi}
+T.~N. Kipf and M.~Welling, ``Semi-supervised classification with graph convolutional networks,'' 2017.
+
+\end{thebibliography}
