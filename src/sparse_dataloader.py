@@ -44,6 +44,7 @@ class TrafficDataset(Dataset):
         future_features: list[str],
         node_batch_size: int = 500,
         node_seed: str = "0_FT.5",
+        seed_list: list[str] | None = None,
         weather_data_dir: str | None = None,
         include_weather: bool = False,
         neighbor_features_path: str | None = None,
@@ -61,6 +62,9 @@ class TrafficDataset(Dataset):
             future_features (list of str): List of dynamic feature names available in the future.
             node_batch_size (int): Number of reachable neighboring nodes to include in each batch.
             node_seed (str): The node ID to use as the seed for the first batch.
+            seed_list (list[str], optional): When provided, the dataset becomes stateless and
+                each sample uses a seed from this list (indexed by sample idx). This is required
+                to safely use multiple DataLoader workers.
             weather_data_dir (str, optional): Directory containing processed weather data files.
             include_weather (bool): Whether to include weather features in the dataset.
             neighbor_features_path (str, optional): Path to parquet file with neighbor-aggregated features for imputation.
@@ -84,6 +88,7 @@ class TrafficDataset(Dataset):
         self.future_features = future_features
         self.include_weather = include_weather
         self.weather_data_dir = weather_data_dir
+        self.seed_list: list[str] | None = None
 
         # Load static data and graph
         # These are assumed to be small enough to fit in memory
@@ -105,6 +110,8 @@ class TrafficDataset(Dataset):
             self.num_nodes / self.node_batch_size
         )
         self.num_static_features = self.static_features.shape[1]
+        if seed_list is not None:
+            self.set_seed_list(seed_list)
 
         # Load weather data if requested
         self.weather_stations = None
@@ -392,6 +399,20 @@ class TrafficDataset(Dataset):
         if node_seed != self.node_seed:
             self.node_seed = node_seed
 
+    def set_seed_list(self, seed_list: list[str]) -> None:
+        """Sets a stateless seed list for multi-worker data loading."""
+        if not seed_list:
+            raise ValueError("seed_list must contain at least one node seed.")
+        missing = [seed for seed in seed_list if seed not in self.graph.nodes()]
+        if missing:
+            raise ValueError(
+                "Some seed_list nodes are not present in the graph: "
+                f"{missing[:5]}{'...' if len(missing) > 5 else ''}"
+            )
+        self.seed_list = [str(seed) for seed in seed_list]
+        self.node_seed = self.seed_list[0]
+        self.total_possible_node_batches = len(self.seed_list)
+
     def _load_graph(
         self, graph_path
     ) -> tuple[nx.Graph, torch.Tensor, dict[str, int], dict[int, str]]:
@@ -525,6 +546,8 @@ class TrafficDataset(Dataset):
         num_time_windows = (
             self.total_timesteps_in_data - self.total_timesteps_window + 1
         )
+        if self.seed_list is not None:
+            return num_time_windows * len(self.seed_list)
         return num_time_windows
 
     @property
@@ -537,6 +560,8 @@ class TrafficDataset(Dataset):
         Returns:
             int: Total samples = (number of time windows) × (number of node batches)
         """
+        if self.seed_list is not None:
+            return len(self)
         return len(self) * self.total_possible_node_batches
 
     def _get_time_and_node_indices(self, idx) -> tuple[int, list[int]]:
@@ -547,8 +572,17 @@ class TrafficDataset(Dataset):
         num_time_windows = (
             self.total_timesteps_in_data - self.total_timesteps_window + 1
         )
+        if self.seed_list is not None:
+            seed_idx = idx // num_time_windows
+            if seed_idx >= len(self.seed_list):
+                raise IndexError(
+                    f"Seed index {seed_idx} out of range for seed_list size {len(self.seed_list)}."
+                )
+            node_seed = self.seed_list[seed_idx]
+        else:
+            node_seed = self.node_seed
         time_idx = idx % num_time_windows
-        neighbors = self.batch_mapping.get(self.node_seed, [])
+        neighbors = self.batch_mapping.get(node_seed, [])
         node_indices = [self.node_to_id[n] for n in neighbors]
 
         # Validate that all node indices are within bounds
