@@ -3,6 +3,16 @@ import torch.nn as nn
 from torch_geometric_temporal.nn.recurrent import A3TGCN2, TGCN, GConvGRU, GConvLSTM
 
 
+def make_batched_edge_index(edge_index: torch.Tensor, num_nodes: int, batch_size: int, device):
+    # edge_index: (2, E)
+    edge_count = edge_index.size(1)
+    batched = edge_index.repeat(1, batch_size).to(device)
+    offsets = (torch.arange(batch_size, device=device) * num_nodes).repeat_interleave(edge_count)
+    batched[0] += offsets
+    batched[1] += offsets
+    return batched  # (2, E * B)
+
+
 class StaticEncoder(nn.Module):
     def __init__(self, in_dim: int, hidden: int = 64, out_dim: int = 32):
         super().__init__()
@@ -26,6 +36,7 @@ class GNN_Temporal_Model(nn.Module):
         input_seq_len,
         forecast_horizon,
         model_type="GConvGRU",
+        include_velocity_target: bool = False,
     ):
         super().__init__()
         self.edge_index = None
@@ -56,7 +67,8 @@ class GNN_Temporal_Model(nn.Module):
         else:
             raise ValueError("Unknown model type")
 
-        self.linear = nn.Linear(32, 1)
+        output_dim = 2 if include_velocity_target else 1
+        self.linear = nn.Linear(32, output_dim)
         self.model_type = model_type
 
     def forward(
@@ -82,6 +94,9 @@ class GNN_Temporal_Model(nn.Module):
         # Hidden state (B,N,32) -> flatten to (B*N, 32)
         h = torch.zeros(B, N, 32, device=device)
         h_flat = h.reshape(B * N, 32)
+        c_flat = None
+        if self.model_type == "GConvLSTM":
+            c_flat = h_flat.clone()
 
         # ---- Past sequence ----
         if self.model_type != "A3TGCN":
@@ -89,7 +104,12 @@ class GNN_Temporal_Model(nn.Module):
                 x_t = dynamic_seq_inputs[:, t]  # (B,N,Fdyn)
                 combined = torch.cat([static_embed, x_t], -1)  # (B,N,32+Fdyn)
                 x_flat = combined.reshape(B * N, 32 + Fdyn)  # (B*N, in)
-                h_flat = self.recurrent(x_flat, self.edge_index, H=h_flat)  # (B*N,32)
+                if self.model_type == "GConvLSTM":
+                    h_flat, c_flat = self.recurrent(
+                        x_flat, self.edge_index, H=h_flat, C=c_flat
+                    )  # (B*N,32)
+                else:
+                    h_flat = self.recurrent(x_flat, self.edge_index, H=h_flat)  # (B*N,32)
         else:
             # Build full (Tin, B*N, in) then reshape to (B*N, Tin, in) if your cell expects that
             seq = []
@@ -106,8 +126,14 @@ class GNN_Temporal_Model(nn.Module):
             f_t = future_known_inputs[:, t]  # (B,N,Ff)
             combined_f = torch.cat([h_flat.view(B, N, 32), f_t], -1)  # (B,N,32+Ff)
             x_flat = combined_f.reshape(B * N, 32 + f_t.size(-1))
-            h_flat = self.future_recurrent(x_flat, self.edge_index, H=h_flat)
-            out_t = self.linear(h_flat).view(B, N, 1)  # (B,N,1)
+            if self.model_type == "GConvLSTM":
+                h_flat, c_flat = self.future_recurrent(
+                    x_flat, self.edge_index, H=h_flat, C=c_flat
+                )
+            else:
+                h_flat = self.future_recurrent(x_flat, self.edge_index, H=h_flat)
+            out_dim = self.linear.out_features
+            out_t = self.linear(h_flat).view(B, N, out_dim)  # (B,N,out_dim)
             outs.append(out_t)
 
-        return torch.cat(outs, dim=-1)  # (B, N, H)                      # (B, N, H)
+        return torch.stack(outs, dim=2)  # (B, N, H, out_dim)

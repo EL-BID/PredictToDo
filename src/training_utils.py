@@ -1,6 +1,7 @@
+import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Iterable, Literal, Optional
 
 import numpy as np
 import pandas as pd
@@ -66,13 +67,79 @@ def pad_collate(batch):
     if hasattr(batch[0], "node_indices"):
         out["node_indices"] = batch[0].node_indices  # (N,) shared across items
 
-    # Optional: weather features
-    if hasattr(batch[0], "x_weather"):
-        out["x_weather"] = torch.stack(
+    # Optional: weather features (concat into dynamic past features)
+    if has_past and hasattr(batch[0], "x_weather"):
+        x_weather = torch.stack(
             [d.x_weather for d in batch], dim=0
         )  # (B, N, Tin, F_weather)
+        out["x_dynamic_past"] = torch.cat(
+            [out["x_dynamic_past"], x_weather], dim=-1
+        )
+        out["x_weather"] = x_weather
 
     return out
+
+
+class SeededBatchSampler:
+    """
+    Batch sampler that keeps all items in a batch tied to the same seed index.
+
+    Each batch consists of time indices for a single seed. This allows
+    multi-worker loading without mutating dataset state between batches.
+    """
+
+    def __init__(
+        self,
+        seed_list: list[str],
+        time_indices: Iterable[int],
+        num_time_windows: int,
+        batch_size: int,
+        drop_last: bool = False,
+        shuffle_time: bool = True,
+        rng_seed: int = 42,
+    ) -> None:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be > 0")
+        if num_time_windows <= 0:
+            raise ValueError("num_time_windows must be > 0")
+        if not seed_list:
+            raise ValueError("seed_list must contain at least one seed")
+
+        self.seed_list = list(seed_list)
+        self.time_indices = list(time_indices)
+        self.num_time_windows = num_time_windows
+        self.batch_size = batch_size
+        self.drop_last = drop_last
+        self.shuffle_time = shuffle_time
+        self.rng = np.random.default_rng(rng_seed)
+
+        if self.drop_last:
+            self._num_batches = len(self.time_indices) // self.batch_size
+        else:
+            self._num_batches = math.ceil(len(self.time_indices) / self.batch_size)
+
+        if len(self.seed_list) < self._num_batches:
+            raise ValueError(
+                "seed_list must have at least one entry per batch. "
+                f"Got {len(self.seed_list)} seeds for {self._num_batches} batches."
+            )
+
+    def __iter__(self):
+        time_indices = list(self.time_indices)
+        if self.shuffle_time:
+            self.rng.shuffle(time_indices)
+
+        for batch_idx in range(self._num_batches):
+            start = batch_idx * self.batch_size
+            end = start + self.batch_size
+            batch_times = time_indices[start:end]
+            if self.drop_last and len(batch_times) < self.batch_size:
+                break
+            seed_offset = batch_idx * self.num_time_windows
+            yield [seed_offset + time_idx for time_idx in batch_times]
+
+    def __len__(self) -> int:
+        return self._num_batches
 
 
 @dataclass
