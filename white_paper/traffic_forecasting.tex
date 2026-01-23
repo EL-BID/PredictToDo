@@ -1,0 +1,154 @@
+\begin{filecontents}{references.bib}
+@article{williams2003modeling,
+  author = {Williams, Billy and Hoel, Lester},
+  year = {2003},
+  month = {11},
+  pages = {664-672},
+  title = {Modeling and Forecasting Vehicular Traffic Flow as a Seasonal ARIMA Process: Theoretical Basis and Empirical Results},
+  volume = {129},
+  journal = {Journal of Transportation Engineering},
+  doi = {10.1061/(ASCE)0733-947X(2003)129:6(664)}
+}
+
+@misc{yao2018deep,
+  title={Deep Multi-View Spatial-Temporal Network for Taxi Demand Prediction}, 
+  author={Huaxiu Yao and Fei Wu and Jintao Ke and Xianfeng Tang and Yitian Jia and Siyu Lu and Pinghua Gong and Jieping Ye and Zhenhui Li},
+  year={2018},
+  eprint={1802.08714},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG},
+  url={https://arxiv.org/abs/1802.08714}, 
+}
+
+@misc{kipf2016semi,
+  title={Semi-Supervised Classification with Graph Convolutional Networks}, 
+  author={Thomas N. Kipf and Max Welling},
+  year={2017},
+  eprint={1609.02907},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG},
+  url={https://arxiv.org/abs/1609.02907}, 
+}
+
+@misc{seo_gcrn,
+  title={Structured Sequence Modeling with Graph Convolutional Recurrent Networks}, 
+  author={Youngjoo Seo and Michaël Defferrard and Pierre Vandergheynst and Xavier Bresson},
+  year={2016},
+  eprint={1612.07659},
+  archivePrefix={arXiv},
+  primaryClass={stat.ML},
+  url={https://arxiv.org/abs/1612.07659}, 
+}
+
+@article{zhao_tgcn,
+   title={T-GCN: A Temporal Graph Convolutional Network for Traffic Prediction},
+   volume={21},
+   ISSN={1558-0016},
+   url={http://dx.doi.org/10.1109/TITS.2019.2935152},
+   DOI={10.1109/tits.2019.2935152},
+   number={9},
+   journal={IEEE Transactions on Intelligent Transportation Systems},
+   publisher={Institute of Electrical and Electronics Engineers (IEEE)},
+   author={Zhao, Ling and Song, Yujiao and Zhang, Chao and Liu, Yu and Wang, Pu and Lin, Tao and Deng, Min and Li, Haifeng},
+   year={2020},
+   month=sep, pages={3848-3858}
+}
+
+@misc{zhu_a3tgcn,
+      title={A3T-GCN: Attention Temporal Graph Convolutional Network for Traffic Forecasting}, 
+      author={Jiawei Zhu and Yujiao Song and Ling Zhao and Haifeng Li},
+      year={2020},
+      eprint={2006.11583},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2006.11583}, 
+}
+\end{filecontents}
+
+
+\documentclass[11pt, a4paper]{article}
+
+% --- Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\usepackage{amsmath, amsfonts}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{setspace}
+\usepackage{lipsum} % For placeholder text
+
+% --- Page Formatting ---
+\geometry{left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm}
+\onehalfspacing
+
+% --- Header Information ---
+\title{\textbf{Traffic Prediction in Bogotá: A Spatio-Temporal Graph Neural Network Approach}\\
+\large A White Paper in collaboration with the Inter-American Development Bank and the Government of Bogotá}
+
+\author{
+    \textbf{Martín Sevilla} \\
+    \texttt{martin.sevilla@outlook.com}
+    \and
+    \textbf{José María Márquez Blanco} \\
+    \texttt{jose.marquez.blanco@gmail.com}
+}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\noindent \textbf{Abstract:} Traffic congestion remains one of the most critical challenges for urban planning in Latin America, particularly in high-density metropolitan areas like Bogotá. Accurate forecasting of traffic flow is essential for optimizing traffic management systems and reducing economic and environmental costs. This white paper presents a novel Spatio-Temporal Graph Neural Network (ST-GNN) framework developed in partnership with the Inter-American Development Bank (IDB) and the Government of Bogotá. We review the evolution of traffic prediction models—from classical statistical methods to state-of-the-art deep learning architectures. Specifically, we evaluate the efficacy of Recurrent Graph Convolutional Networks, including \textbf{TGCN}, \textbf{GConvGRU}, and \textbf{GConvLSTM}, as well as attention-based mechanisms like \textbf{A3TGCN}. Our proposed model leverages the complex topological structure of Bogotá's road network to deliver precise, real-time traffic predictions.
+\end{abstract}
+
+\section{Introduction}
+
+Urban mobility is a defining challenge of the 21st century. For cities like Bogotá, which consistently ranks among the most congested urban centers globally, the implications of traffic gridlock extend beyond mere inconvenience; they significantly impact economic productivity, air quality, and the overall quality of life for millions of citizens. In response to these challenges, the Government of Bogotá, in collaboration with the Inter-American Development Bank (IDB), has launched an initiative to modernize the city's traffic management capabilities through Artificial Intelligence (AI) and data-driven decision-making.
+
+The core of this initiative lies in the ability to accurately predict traffic conditions. However, traffic flow is inherently complex, exhibiting dynamic dependencies in both \textit{space} (the connectivity of the road network) and \textit{time} (historical flow patterns). Traditional time-series analysis methods, such as ARIMA, often fail to capture the spatial correlations between adjacent road segments. Conversely, standard Convolutional Neural Networks (CNNs) are limited to grid-like structures and struggle with the irregular topology of a city's road network.
+
+To address these limitations, we employ Spatio-Temporal Graph Neural Networks (ST-GNNs). These models represent the road network as a graph, where intersections are nodes and roads are edges, allowing for the simultaneous extraction of spatial and temporal features.
+
+Recent advancements in this field have produced powerful architectures. The \textbf{GConvLSTM} and \textbf{GConvGRU} \cite{seo_gcrn} integrate Graph Convolutional Networks (GCNs) with recurrent units, effectively learning sequence patterns on graph structures. Similarly, the Temporal Graph Convolutional Network (\textbf{TGCN}) \cite{zhao_tgcn} has demonstrated superior performance by combining GCNs with Gated Recurrent Units (GRUs) to capture non-linear traffic dynamics. Furthermore, attention mechanisms have been introduced to weigh the importance of different temporal instances, as seen in the Attention Based Spatial-Temporal Graph Convolutional Network (\textbf{A3TGCN}) \cite{zhu_a3tgcn}.
+
+This white paper details the deployment of these advanced ST-GNN architectures tailored to the specific constraints and availability of data in Bogotá. By accurately modeling the spatio-temporal dependencies of the city's traffic, we aim to provide actionable insights for the \textit{Secretaría de Movilidad}, facilitating proactive rather than reactive traffic management.
+
+\section{Literature Review}
+
+Traffic prediction has evolved from simple statistical baselines to complex deep learning frameworks. This section categorizes these approaches into three distinct generations: statistical methods, Euclidean deep learning, and Graph Neural Networks.
+
+\subsection{Statistical and Machine Learning Approaches}
+Early attempts at traffic forecasting relied heavily on statistical theory. The Autoregressive Integrated Moving Average (ARIMA) model and its variants (e.g., Seasonal ARIMA) were widely used due to their mathematical soundness \cite{williams2003modeling}. While effective for stable, short-term predictions on single road segments, these models struggle with the non-linear and stochastic nature of complex traffic networks. Machine learning methods such as Support Vector Regression (SVR) and k-Nearest Neighbors (k-NN) offered improvements in handling non-linearity but still failed to explicitly model the spatial dependencies between distant roads.
+
+\subsection{Euclidean Deep Learning}
+The advent of Deep Learning introduced Convolutional Neural Networks (CNNs) and Recurrent Neural Networks (RNNs) to the domain. RNNs, particularly Long Short-Term Memory (LSTM) units and Gated Recurrent Units (GRUs), became the standard for capturing temporal dependencies in time-series data. Hybrid models, such as CNN-LSTM, attempted to capture spatial features using 2D convolutions \cite{yao2018deep}. However, CNNs operate on Euclidean domains (grids), making them suboptimal for road networks which are naturally non-Euclidean graphs. Treaties of a city map as an image often result in a loss of topological information.
+
+\subsection{Spatio-Temporal Graph Neural Networks (ST-GNNs)}
+To effectively model the non-Euclidean structure of road networks, Graph Neural Networks (GNNs) were introduced. Kipf and Welling \cite{kipf2016semi} proposed the Graph Convolutional Network (GCN), which generalizes the convolution operation to graphs using spectral graph theory.
+
+In traffic prediction, the goal is to capture both spatial correlations (graph structure) and temporal dynamics (time series). This led to the development of Spatio-Temporal GNNs.
+
+\subsubsection{Recurrent-Based Approaches}
+A prominent direction involves replacing the matrix multiplications in standard RNN cells with graph convolution operations. 
+\begin{itemize}
+    \item \textbf{GConvLSTM / GConvGRU:} Seo et al. \cite{seo_gcrn} proposed the Graph Convolutional Recurrent Network, which introduces the \textit{GConvLSTM} and \textit{GConvGRU}. By embedding the Chebyshev spectral graph convolution operator directly into the input-to-state and state-to-state transitions of the LSTM/GRU, these models can learn spatial structures that evolve over time.
+    \item \textbf{TGCN:} Zhao et al. \cite{zhao_tgcn} proposed the Temporal Graph Convolutional Network (\textbf{TGCN}). This architecture combines a GCN for spatial feature extraction with a GRU for temporal modeling. The GCN acquires the topological relationship of the road network, while the GRU acquires the dynamic change of traffic data.
+\end{itemize}
+
+\subsubsection{Attention-Based Approaches}
+While recurrent mechanisms are powerful, they can struggle with very long-term dependencies and computational efficiency. Attention mechanisms have been adopted to address this.
+\begin{itemize}
+    \item \textbf{A3TGCN:} To further refine the ability to capture global temporal dynamics, Zhu et al. \cite{zhu_a3tgcn} introduced the \textbf{A3TGCN}. This model extends the TGCN capability by adding an attention mechanism that automatically adjusts the importance of different time points in the historical data, thereby improving prediction accuracy in scenarios with high variability.
+\end{itemize}
+
+These ST-GNN frameworks form the theoretical backbone of the predictive model developed for the Bogotá traffic project.
+
+% --- Bibliography ---
+\bibliographystyle{ieeetr}
+\bibliography{references}
+
+\end{document}
