@@ -1,36 +1,33 @@
-import math
-import os  # noqa: I001
-import sys
-import time
-import logging
 import argparse
+import logging
+import math
+import os
 import pickle
 import shutil
-from pathlib import Path
+import sys
+import time
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.amp import GradScaler
 from tqdm.auto import tqdm
 
 # Add project root to path to allow package imports when run as a script.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.models.gnn_temporal import GNN_Temporal_Model
 from src.sparse_dataloader import TrafficDataset
 from src.temporal_split import temporal_train_test_split
+from src.training.losses import masked_mse
 from src.training_utils import (
-    pad_collate,
-    build_node_50_picker,
     EpochUniquePicker,
     SeededBatchSampler,
+    build_node_50_picker,
+    pad_collate,
 )
-from src.models.gnn_temporal import GNN_Temporal_Model
-from src.training.loop import train_one_epoch
-from src.training.losses import masked_mse
-from src.utils.logging import log
 
 LOG_LEVEL = int(os.getenv("SM_LOG_LEVEL", logging.INFO))
 CHANNEL_TRAIN = os.getenv("SM_CHANNEL_TRAIN", "/opt/ml/input/data/train")
@@ -38,7 +35,9 @@ CHANNEL_VALIDATION = os.getenv("SM_CHANNEL_VALIDATION", "/opt/ml/input/data/vali
 MODEL_DIR = os.getenv("SM_MODEL_DIR", "/opt/ml/model")
 CHECKPOINT_DIR = os.getenv("SM_CHECKPOINTS_PATH", "/opt/ml/checkpoints")
 
-logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=LOG_LEVEL, format="[%(asctime)s] %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -57,7 +56,9 @@ def _tensor_stats(t: torch.Tensor) -> dict[str, float]:
     finite = torch.isfinite(t)
     nan_count = int((~finite & torch.isnan(t)).sum().item())
     inf_count = int((~finite & torch.isinf(t)).sum().item())
-    max_abs = float(torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0).abs().max().item())
+    max_abs = float(
+        torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0).abs().max().item()
+    )
     return {"nan": nan_count, "inf": inf_count, "max_abs": max_abs}
 
 
@@ -152,7 +153,9 @@ def _ensure_seed_list_length(seed_list: list[str], num_batches: int) -> list[str
 
 
 def parse_args() -> dict:
-    parser = argparse.ArgumentParser(description="SageMaker Training for Traffic Forecasting GNN")
+    parser = argparse.ArgumentParser(
+        description="SageMaker Training for Traffic Forecasting GNN"
+    )
 
     # Hyperparameters
     parser.add_argument(
@@ -341,7 +344,7 @@ def parse_args() -> dict:
     return payload
 
 
-def check_data_channels() -> tuple[Path, Path]:
+def check_data_channels() -> Path:
     """
     Check if the data channels for training and validation exist.
     In SageMaker, the training data is in SM_CHANNEL_TRAIN containing:
@@ -353,7 +356,7 @@ def check_data_channels() -> tuple[Path, Path]:
     train_path = Path(CHANNEL_TRAIN)
     if not train_path.exists():
         raise ValueError(f"Training data channel '{CHANNEL_TRAIN}' does not exist.")
-    
+
     logger.info(f"Training data files in {CHANNEL_TRAIN}:")
     for item in sorted(train_path.rglob("*")):
         if item.is_file():
@@ -422,7 +425,9 @@ def cache_training_data(
         raise ValueError(f"Sparse datasets directory not found: {sparse_dir}")
 
     dynamic_files = _select_dynamic_files(sparse_dir, use_minimal_datasets)
-    dynamic_metadata = [sparse_dir / f"{f.with_suffix('').name}_metadata.pkl" for f in dynamic_files]
+    dynamic_metadata = [
+        sparse_dir / f"{f.with_suffix('').name}_metadata.pkl" for f in dynamic_files
+    ]
     missing_meta = [str(f) for f in dynamic_metadata if not f.exists()]
     if missing_meta:
         raise ValueError(f"Missing metadata files: {missing_meta}")
@@ -471,45 +476,47 @@ def setup_sagemaker_paths(
     └── neighbor_features.parquet (optional)
     """
     paths = {}
-    
+
     # Graph
     paths["graph"] = train_path / "conectivity_graph" / "road_graph.pickle"
     if not paths["graph"].exists():
         raise ValueError(f"Graph not found: {paths['graph']}")
-    
+
     # Sparse data directory
     sparse_dir = train_path / "sparse_datasets"
     if not sparse_dir.exists():
         raise ValueError(f"Sparse datasets directory not found: {sparse_dir}")
-    
+
     # Static data
     paths["static"] = sparse_dir / "static_dataset.h5"
     if not paths["static"].exists():
         raise ValueError(f"Static data not found: {paths['static']}")
-    
+
     # Dynamic data files
     dynamic_files = _select_dynamic_files(sparse_dir, use_minimal_datasets)
     paths["dynamic"] = dynamic_files
 
     # Metadata files (matching dynamic files)
-    metadata_files = [sparse_dir / f"{f.with_suffix('').name}_metadata.pkl" for f in dynamic_files]
+    metadata_files = [
+        sparse_dir / f"{f.with_suffix('').name}_metadata.pkl" for f in dynamic_files
+    ]
     missing_meta = [str(f) for f in metadata_files if not f.exists()]
     if missing_meta:
         raise ValueError(f"Missing metadata files: {missing_meta}")
     paths["metadata"] = metadata_files
-    
+
     # Target data
     paths["target"] = sparse_dir / "jams_dataset.h5"
     if not paths["target"].exists():
         raise ValueError(f"Target data not found: {paths['target']}")
-    
+
     # Normalization constants
     paths["normalization"] = sparse_dir / "normalization_constants.pkl"
     if not paths["normalization"].exists():
         logger.warning(f"Normalization constants not found: {paths['normalization']}")
         logger.warning("Training will proceed WITHOUT normalization")
         paths["normalization"] = None
-    
+
     # Optional neighbor features
     paths["neighbor_features"] = train_path / "neighbor_features.parquet"
     if not paths["neighbor_features"].exists():
@@ -521,12 +528,12 @@ def setup_sagemaker_paths(
     if not paths["nodes_traffic_info"].exists():
         logger.warning(f"Nodes traffic info not found: {paths['nodes_traffic_info']}")
         paths["nodes_traffic_info"] = None
-    
+
     # Weather data directory (optional)
     if include_weather:
         _required_weather_files(sparse_dir)
     paths["weather_dir"] = sparse_dir
-    
+
     logger.info("SageMaker paths validated successfully")
     return paths
 
@@ -542,13 +549,15 @@ def train_model(args: dict, paths: dict) -> None:
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
-    
+
     # Debug mode flag
     debug_batches = args.get("debug_batches", None)
     if debug_batches:
-        logger.warning(f"🔴 DEBUG MODE ENABLED: Training/validation limited to {debug_batches} batches")
+        logger.warning(
+            f"🔴 DEBUG MODE ENABLED: Training/validation limited to {debug_batches} batches"
+        )
     sanity_checks = args.get("sanity_checks", False)
-    
+
     # ============ 1. Load Dataset ============
     logger.info("Loading TrafficDataset...")
     traffic_dataset = TrafficDataset(
@@ -560,26 +569,36 @@ def train_model(args: dict, paths: dict) -> None:
         in_timesteps=args["input_seq_len"],
         out_timesteps=args["output_seq_len"],
         future_features=[
-            "coi_puntos", "coi_tramo", "AGLOMERACION", "EMERGENCIA", "MANIFESTACION"
+            "coi_puntos",
+            "coi_tramo",
+            "AGLOMERACION",
+            "EMERGENCIA",
+            "MANIFESTACION",
         ],
         node_batch_size=args["node_batch_size"],
         weather_data_dir=str(paths["weather_dir"]),
         include_weather=args["include_weather"],
-        neighbor_features_path=str(paths["neighbor_features"]) if paths["neighbor_features"] else None,
+        neighbor_features_path=str(paths["neighbor_features"])
+        if paths["neighbor_features"]
+        else None,
         include_velocity_target=args["include_velocity_target"],
-        normalization_constants_path=str(paths["normalization"]) if paths["normalization"] else None,
+        normalization_constants_path=str(paths["normalization"])
+        if paths["normalization"]
+        else None,
     )
     logger.info(f"Dataset loaded: {len(traffic_dataset)} samples")
     logger.info(f"  Num nodes: {traffic_dataset.num_nodes}")
     logger.info(f"  Static features: {traffic_dataset.num_static_features}")
     logger.info(f"  Dynamic features: {traffic_dataset.num_dynamic_features}")
-    logger.info(f"  Target features: {traffic_dataset.num_target_features if hasattr(traffic_dataset, 'num_target_features') else 1 + (1 if args['include_velocity_target'] else 0)}")
+    logger.info(
+        f"  Target features: {traffic_dataset.num_target_features if hasattr(traffic_dataset, 'num_target_features') else 1 + (1 if args['include_velocity_target'] else 0)}"
+    )
     logger.info(
         "  include_weather=%s num_weather_features=%s",
         args["include_weather"],
         getattr(traffic_dataset, "num_weather_features", 0),
     )
-    
+
     # ============ 2. Split Dataset ============
     use_seeded_batches = args.get("seeded_batch_sampler", True)
     if traffic_dataset.total_timesteps_in_data < traffic_dataset.total_timesteps_window:
@@ -613,12 +632,17 @@ def train_model(args: dict, paths: dict) -> None:
             traffic_dataset,
             train_ratio=args["train_ratio"],
         )
-        logger.info(f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}")
-    
+        logger.info(
+            f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}"
+        )
+
     # ============ 3. Create DataLoaders ============
     num_workers = int(args.get("num_workers", 0))
     if not use_seeded_batches and num_workers != 0:
-        logger.warning("num_workers=%s is not supported with per-batch seed rotation. Forcing num_workers=0.", num_workers)
+        logger.warning(
+            "num_workers=%s is not supported with per-batch seed rotation. Forcing num_workers=0.",
+            num_workers,
+        )
         num_workers = 0
     logger.info("Using num_workers=%s", num_workers)
     pin_memory = bool(args.get("pin_memory", False))
@@ -671,7 +695,7 @@ def train_model(args: dict, paths: dict) -> None:
         args["output_seq_len"],
         future_dim,
     )
-    
+
     # ============ 4. Create Model ============
     logger.info(f"Creating {args['model_type']} model...")
     model = GNN_Temporal_Model(
@@ -684,17 +708,19 @@ def train_model(args: dict, paths: dict) -> None:
         model_type=args["model_type"],
         include_velocity_target=args["include_velocity_target"],
     ).to(device)
-    
+
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"Model parameters: {total_params:,} total, {trainable_params:,} trainable")
-    
+    logger.info(
+        f"Model parameters: {total_params:,} total, {trainable_params:,} trainable"
+    )
+
     # ============ 5. Setup Training ============
     optimizer = torch.optim.Adam(model.parameters(), lr=args["learning_rate"])
     loss_fn = nn.MSELoss()
     level_weights = torch.tensor([0.25, 1.0, 2.0, 3.0, 4.0, 5.0])
     grad_clip_norm = args["grad_clip_norm"]
-    
+
     # Seed picker for node rotation
     base_picker = None
     if paths.get("nodes_traffic_info"):
@@ -703,35 +729,36 @@ def train_model(args: dict, paths: dict) -> None:
             top_frac=0.2,
             seed=42,
         )
-    
+
     if base_picker is None:
         logger.warning("Could not create seed picker, training will use single seed")
         picker = None
     else:
         picker = EpochUniquePicker(base_picker, p_top=0.5, on_exhaust="reset")
-    
+
     # Create checkpoint directory
     Path(CHECKPOINT_DIR).mkdir(parents=True, exist_ok=True)
-    
+
     metrics_history = {
         "epoch": [],
         "train_loss": [],
         "val_loss": [],
         "train_time": [],
     }
-    
+
     # ============ 6. Training Loop ============
     logger.info(f"Starting training for {args['epochs']} epochs...")
-    best_val_loss = float('inf')
-    
+    best_val_loss = float("inf")
+    checkpoint_payload, model_config = dict(), dict()
+
     for epoch in range(args["epochs"]):
         epoch_start = time.time()
         epoch_num = epoch + 1
-        
+
         # Train
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info(f"Epoch {epoch_num}/{args['epochs']}")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         model.train()
         train_loss = 0.0
@@ -741,12 +768,14 @@ def train_model(args: dict, paths: dict) -> None:
             if picker is not None:
                 picker.start_epoch()
             train_batches = _num_batches(
-                len(train_time_indices),
+                len(train_time_indices),  # type: ignore
                 args["batch_size"],
                 args.get("drop_last", False),
             )
             if train_batches == 0:
-                raise ValueError("No training batches available for the selected time window split.")
+                raise ValueError(
+                    "No training batches available for the selected time window split."
+                )
             train_seed_list = _build_seed_list(
                 picker,
                 traffic_dataset.node_seed,
@@ -757,7 +786,7 @@ def train_model(args: dict, paths: dict) -> None:
                 train_dataset,
                 batch_sampler=SeededBatchSampler(
                     seed_list=train_seed_list,
-                    time_indices=train_time_indices,
+                    time_indices=train_time_indices,  # type: ignore
                     num_time_windows=num_time_windows,
                     batch_size=args["batch_size"],
                     drop_last=args.get("drop_last", False),
@@ -775,7 +804,7 @@ def train_model(args: dict, paths: dict) -> None:
                 shuffle=True,
                 **loader_kwargs,
             )
-        
+
         epoch_train_steps = len(train_loader)
         if debug_batches is not None:
             epoch_train_steps = min(epoch_train_steps, debug_batches)
@@ -795,7 +824,7 @@ def train_model(args: dict, paths: dict) -> None:
             if debug_batches and batch_idx >= debug_batches:
                 logger.info(f"Debug mode: Breaking training after {batch_idx} batches")
                 break
-            
+
             # Move to device
             batch_start = time.perf_counter()
             data_wait = batch_start - prev_batch_end
@@ -857,16 +886,21 @@ def train_model(args: dict, paths: dict) -> None:
                 _assert_finite("x_dynamic_past", x_dyn_past)
                 _assert_finite("x_dynamic_future", x_dyn_future)
                 _assert_finite("y_target", y_target)
-            
+
             B = x_static.shape[0]
-            
+
             # Forward pass
             optimizer.zero_grad(set_to_none=True)
-            preds = model(edge_index, x_static[0], x_dyn_past.permute(0, 2, 1, 3), x_dyn_future.permute(0, 2, 1, 3))
+            preds = model(
+                edge_index,
+                x_static[0],
+                x_dyn_past.permute(0, 2, 1, 3),
+                x_dyn_future.permute(0, 2, 1, 3),
+            )
             after_forward = time.perf_counter()
             if sanity_checks:
                 _assert_finite("preds", preds)
-            
+
             # Loss
             if y_target.dim() == 4 and y_target.size(-1) >= 1:
                 level_pred = preds[..., 0] if preds.dim() == 4 else preds
@@ -894,7 +928,7 @@ def train_model(args: dict, paths: dict) -> None:
                     piecewise_mae_lambda=args["loss_piecewise_mae_lambda"],
                     directional_lambda=args["loss_directional_lambda"],
                 )
-            
+
             after_loss = time.perf_counter()
             # Backward
             loss.backward()
@@ -903,10 +937,10 @@ def train_model(args: dict, paths: dict) -> None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
             optimizer.step()
             after_step = time.perf_counter()
-            
+
             train_loss += loss.item() * B
             train_samples += B
-            
+
             pbar.set_postfix({"loss": f"{train_loss / max(train_samples, 1):.6f}"})
 
             step_num = epoch * epoch_train_steps + batch_idx + 1
@@ -973,7 +1007,9 @@ def train_model(args: dict, paths: dict) -> None:
                         key: timing_window_sums[key] / timing_window_count
                         for key in timing_window_sums
                     }
-                    _log_metrics("timing_window", timing_window_avgs, epoch_num, step_num)
+                    _log_metrics(
+                        "timing_window", timing_window_avgs, epoch_num, step_num
+                    )
                     timing_window_sums = defaultdict(float)
                     timing_window_count = 0
 
@@ -983,45 +1019,53 @@ def train_model(args: dict, paths: dict) -> None:
                         if metric_window_counts[key]
                     }
                     if metric_window_avgs:
-                        _log_metrics("train_window", metric_window_avgs, epoch_num, step_num)
+                        _log_metrics(
+                            "train_window", metric_window_avgs, epoch_num, step_num
+                        )
                     metric_window_sums = defaultdict(float)
                     metric_window_counts = defaultdict(int)
-            
+
             # Rotate seed if picker available
             if picker is not None and not use_seeded_batches:
                 next_seed = picker.pick()
                 traffic_dataset.reasign_seed(str(next_seed))
-        
+
         avg_train_loss = train_loss / max(train_samples, 1)
         logger.info(f"Train Loss: {avg_train_loss:.6f}")
-        _log_metrics("train_epoch", {"train_loss": avg_train_loss}, epoch_num, epoch_train_steps)
+        _log_metrics(
+            "train_epoch", {"train_loss": avg_train_loss}, epoch_num, epoch_train_steps
+        )
         metric_epoch_avgs = {
             key: metric_epoch_sums[key] / metric_epoch_counts[key]
             for key in metric_epoch_sums
             if metric_epoch_counts[key]
         }
         if metric_epoch_avgs:
-            _log_metrics("train_epoch_avg", metric_epoch_avgs, epoch_num, epoch_train_steps)
+            _log_metrics(
+                "train_epoch_avg", metric_epoch_avgs, epoch_num, epoch_train_steps
+            )
         if timing_epoch_count:
             timing_epoch_avgs = {
                 key: timing_epoch_sums[key] / timing_epoch_count
                 for key in timing_epoch_sums
             }
-            _log_metrics("timing_epoch", timing_epoch_avgs, epoch_num, epoch_train_steps)
-        
+            _log_metrics(
+                "timing_epoch", timing_epoch_avgs, epoch_num, epoch_train_steps
+            )
+
         # Validation
         model.eval()
         val_loss = 0.0
         val_samples = 0
-        
+
         with torch.no_grad():
             if use_seeded_batches:
                 val_batches = _num_batches(
-                    len(val_time_indices),
+                    len(val_time_indices),  # type: ignore
                     args["batch_size"],
                     args.get("drop_last", False),
                 )
-                val_seed_list = _ensure_seed_list_length(train_seed_list, val_batches)
+                val_seed_list = _ensure_seed_list_length(train_seed_list, val_batches)  # type: ignore
                 traffic_dataset.set_seed_list(
                     val_seed_list or [traffic_dataset.node_seed]
                 )
@@ -1029,7 +1073,7 @@ def train_model(args: dict, paths: dict) -> None:
                     val_dataset,
                     batch_sampler=SeededBatchSampler(
                         seed_list=val_seed_list or [traffic_dataset.node_seed],
-                        time_indices=val_time_indices,
+                        time_indices=val_time_indices,  # type: ignore
                         num_time_windows=num_time_windows,
                         batch_size=args["batch_size"],
                         drop_last=args.get("drop_last", False),
@@ -1054,9 +1098,11 @@ def train_model(args: dict, paths: dict) -> None:
             for val_idx, batch in enumerate(pbar):
                 # Break if debug mode limit reached
                 if debug_batches and val_idx >= debug_batches:
-                    logger.info(f"Debug mode: Breaking validation after {val_idx} batches")
+                    logger.info(
+                        f"Debug mode: Breaking validation after {val_idx} batches"
+                    )
                     break
-                
+
                 x_static = batch["x_static"].to(device)
                 x_dyn_past = batch["x_dynamic_past"].to(device)
                 x_dyn_future = batch["x_dynamic_future"].to(device)
@@ -1081,10 +1127,15 @@ def train_model(args: dict, paths: dict) -> None:
                     _assert_finite("val_x_dynamic_past", x_dyn_past)
                     _assert_finite("val_x_dynamic_future", x_dyn_future)
                     _assert_finite("val_y_target", y_target)
-                
+
                 B = x_static.shape[0]
-                
-                preds = model(edge_index, x_static[0], x_dyn_past.permute(0, 2, 1, 3), x_dyn_future.permute(0, 2, 1, 3))
+
+                preds = model(
+                    edge_index,
+                    x_static[0],
+                    x_dyn_past.permute(0, 2, 1, 3),
+                    x_dyn_future.permute(0, 2, 1, 3),
+                )
                 if sanity_checks:
                     _assert_finite("val_preds", preds)
                 if y_target.dim() == 4 and y_target.size(-1) >= 1:
@@ -1100,7 +1151,11 @@ def train_model(args: dict, paths: dict) -> None:
                         piecewise_mae_lambda=args["loss_piecewise_mae_lambda"],
                         directional_lambda=args["loss_directional_lambda"],
                     )
-                    if y_target.size(-1) >= 2 and preds.dim() == 4 and preds.size(-1) >= 2:
+                    if (
+                        y_target.size(-1) >= 2
+                        and preds.dim() == 4
+                        and preds.size(-1) >= 2
+                    ):
                         loss = loss + loss_fn(preds[..., 1], y_target[..., 1])
                 else:
                     loss = masked_mse(
@@ -1113,7 +1168,7 @@ def train_model(args: dict, paths: dict) -> None:
                         piecewise_mae_lambda=args["loss_piecewise_mae_lambda"],
                         directional_lambda=args["loss_directional_lambda"],
                     )
-                
+
                 val_loss += loss.item() * B
                 val_samples += B
                 pbar.set_postfix({"val_loss": f"{val_loss / max(val_samples, 1):.6f}"})
@@ -1123,11 +1178,13 @@ def train_model(args: dict, paths: dict) -> None:
                 metrics = {"val_loss": float(loss)}
                 metrics.update({f"val_{k}": v for k, v in split_losses.items()})
                 _log_metrics("val", metrics, epoch_num, step_num)
-        
+
         avg_val_loss = val_loss / max(val_samples, 1)
         logger.info(f"Val Loss: {avg_val_loss:.6f}")
-        _log_metrics("val_epoch", {"val_loss": avg_val_loss}, epoch_num, epoch_val_steps)
-        
+        _log_metrics(
+            "val_epoch", {"val_loss": avg_val_loss}, epoch_num, epoch_val_steps
+        )
+
         model_config = {
             "static_dim": traffic_dataset.num_static_features,
             "dynamic_dim": dynamic_dim,
@@ -1149,32 +1206,32 @@ def train_model(args: dict, paths: dict) -> None:
             checkpoint_path = Path(CHECKPOINT_DIR) / f"best_model.pth"
             torch.save(checkpoint_payload, checkpoint_path)
             logger.info(f"✓ New best model saved to {checkpoint_path}")
-        
+
         # Save periodic checkpoint
         if (epoch + 1) % 5 == 0:
-            checkpoint_path = Path(CHECKPOINT_DIR) / f"checkpoint_epoch_{epoch+1}.pth"
+            checkpoint_path = Path(CHECKPOINT_DIR) / f"checkpoint_epoch_{epoch + 1}.pth"
             torch.save(checkpoint_payload, checkpoint_path)
             logger.info(f"✓ Checkpoint saved to {checkpoint_path}")
-        
+
         epoch_time = time.time() - epoch_start
         metrics_history["epoch"].append(epoch + 1)
         metrics_history["train_loss"].append(avg_train_loss)
         metrics_history["val_loss"].append(avg_val_loss)
         metrics_history["train_time"].append(epoch_time)
-        
+
         logger.info(f"Epoch time: {epoch_time:.1f}s")
-    
+
     # ============ 7. Save Final Model ============
     logger.info("\nTraining completed!")
-    
+
     # Save final model to SM_MODEL_DIR
     model_dir = Path(MODEL_DIR)
     model_dir.mkdir(parents=True, exist_ok=True)
-    
+
     final_model_path = model_dir / "model.pth"
     torch.save(checkpoint_payload, final_model_path)
     logger.info(f"✓ Final model saved to {final_model_path}")
-    
+
     # Save model config (separate for convenience)
     config_path = model_dir / "model_config.pkl"
     with open(config_path, "wb") as f:
@@ -1210,32 +1267,32 @@ def train_model(args: dict, paths: dict) -> None:
     with open(data_meta_path, "wb") as f:
         pickle.dump(data_meta, f)
     logger.info(f"✓ Data metadata saved to {data_meta_path}")
-    
+
     # Save metrics
     metrics_path = model_dir / "metrics.pkl"
     with open(metrics_path, "wb") as f:
         pickle.dump(metrics_history, f)
     logger.info(f"✓ Metrics saved to {metrics_path}")
-    
-    logger.info(f"\n{'='*80}")
+
+    logger.info(f"\n{'=' * 80}")
     logger.info(f"TRAINING SUMMARY")
-    logger.info(f"{'='*80}")
+    logger.info(f"{'=' * 80}")
     logger.info(f"Best validation loss: {best_val_loss:.6f}")
     logger.info(f"Final training loss: {metrics_history['train_loss'][-1]:.6f}")
     logger.info(f"Total training time: {sum(metrics_history['train_time']):.1f}s")
     logger.info(f"Model saved to: {final_model_path}")
-    logger.info(f"{'='*80}\n")
+    logger.info(f"{'=' * 80}\n")
 
 
 if __name__ == "__main__":
     try:
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info(f"SageMaker Training Job Started at {datetime.now()}")
-        logger.info(f"{'='*80}\n")
-        
+        logger.info(f"{'=' * 80}\n")
+
         # Parse arguments
         args = parse_args()
-        
+
         # Check data channels
         train_path = check_data_channels()
 
@@ -1255,14 +1312,14 @@ if __name__ == "__main__":
             include_weather=args["include_weather"],
             use_minimal_datasets=args["use_minimal_datasets"],
         )
-        
+
         # Train model
         train_model(args, paths)
-        
-        logger.info(f"\n{'='*80}")
+
+        logger.info(f"\n{'=' * 80}")
         logger.info(f"SageMaker Training Job Completed Successfully")
-        logger.info(f"{'='*80}\n")
-        
+        logger.info(f"{'=' * 80}\n")
+
     except Exception as e:
         logger.error(f"\nTraining failed with error: {str(e)}", exc_info=True)
         sys.exit(1)
