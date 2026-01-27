@@ -135,11 +135,11 @@ class InferenceDataLoader:
         from scipy.sparse import coo_matrix
 
         with h5py.File(file_path, "r") as f:
-            data = f["data"][:]
+            data = f["data"][:]  # type: ignore
 
-        node_idx, feature_idx, values = data[:, 0], data[:, 1], data[:, 2]
-        num_nodes = int(node_idx.max() + 1)
-        num_features = int(feature_idx.max() + 1)
+        node_idx, feature_idx, values = data[:, 0], data[:, 1], data[:, 2]  # type: ignore
+        num_nodes = int(node_idx.max() + 1)  # type: ignore
+        num_features = int(feature_idx.max() + 1)  # type: ignore
 
         sparse_matrix = coo_matrix(
             (values, (node_idx, feature_idx)),
@@ -403,6 +403,10 @@ class InferenceDataLoader:
                 time_index,
                 future_time_index,
             )
+
+        # Store the future time index for prediction reconstruction
+        features["future_time_index"] = future_time_index
+        features["current_timestamp"] = current_timestamp
 
         return features
 
@@ -820,8 +824,8 @@ class InferenceDataLoader:
         df["timeframe"] = pd.to_datetime(df["timeframe"])
 
         # Remove timezone if present
-        if df["timeframe"].dt.tz is not None:
-            df["timeframe"] = df["timeframe"].dt.tz_localize(None)
+        if df["timeframe"].dt.tz is not None:  # type: ignore
+            df["timeframe"] = df["timeframe"].dt.tz_localize(None)  # type: ignore
 
         # Filter to time window
         df = df[df["timeframe"].isin(time_index)]
@@ -1071,7 +1075,10 @@ class InferenceDataLoader:
                 x_static = x_static / self.static_norm_tensor
                 x_static = torch.clamp(x_static, -1, 1)
 
-            # Create Data object
+            # Map node indices back to node IDs for reconstruction
+            node_ids = [self.id_to_node[idx] for idx in node_indices]
+
+            # Create Data object with metadata for reconstruction
             data = Data(
                 x_static=x_static,
                 x_dynamic_past=x_dynamic_past,
@@ -1079,6 +1086,11 @@ class InferenceDataLoader:
                 x_weather=x_weather,
                 edge_index=edge_index,
                 num_nodes=len(node_indices),
+                # Metadata for prediction reconstruction
+                node_indices=torch.tensor(node_indices, dtype=torch.long),
+                node_ids=node_ids,  # Store as list (PyG Data supports non-tensor attrs)
+                future_timestamps=features_dict.get("future_time_index"),
+                current_timestamp=features_dict.get("current_timestamp"),
             )
 
             batches.append(data)
@@ -1185,7 +1197,10 @@ if __name__ == "__main__":
         print(f"  - x_dynamic_past: {batch.x_dynamic_past.shape}")
         print(f"  - x_dynamic_future: {batch.x_dynamic_future.shape}")
         print(f"  - x_weather: {batch.x_weather.shape}")
-        print(f"  - edge_index: {batch.edge_index.shape}")
+        if batch.edge_index is not None:
+            print(f"  - edge_index: {batch.edge_index.shape}")
+        else:
+            print("  - edge_index: None")
         print(f"  - num_nodes: {batch.num_nodes}")
 
         # Example: Make predictions with a trained model
