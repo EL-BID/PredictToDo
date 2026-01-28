@@ -203,12 +203,24 @@ class InferencePipeline:
                     for i, batch in enumerate(batches):
                         logger.debug(f"Processing batch {i + 1}/{len(batches)}")
 
+                        x_static = batch.x_static
+                        x_dyn_past = batch.x_dynamic_past.unsqueeze(0).permute(
+                            0, 2, 1, 3
+                        )
+                        x_dyn_future = batch.x_dynamic_future.unsqueeze(0).permute(
+                            0, 2, 1, 3
+                        )
+                        if getattr(batch, "x_weather", None) is not None:
+                            x_weather = batch.x_weather.unsqueeze(0).permute(
+                                0, 2, 1, 3
+                            )
+                            x_dyn_past = torch.cat([x_dyn_past, x_weather], dim=-1)
+
                         pred = self.model(
-                            x_static=batch.x_static.unsqueeze(0),
-                            x_dynamic_past=batch.x_dynamic_past.unsqueeze(0),
-                            x_dynamic_future=batch.x_dynamic_future.unsqueeze(0),
-                            x_weather=batch.x_weather.unsqueeze(0),
-                            edge_index=batch.edge_index,
+                            batch.edge_index,
+                            x_static,
+                            x_dyn_past,
+                            x_dyn_future,
                         )
 
                         # De-normalize predictions to actual values
