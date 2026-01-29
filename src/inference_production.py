@@ -10,6 +10,7 @@ This script demonstrates best practices for running the inference pipeline in pr
 """
 
 import argparse
+import json
 import logging
 import pickle
 import time
@@ -19,6 +20,7 @@ from typing import List, Optional
 
 import pandas as pd
 import torch
+from tqdm import tqdm
 
 from inference_dataloader import InferenceDataLoader
 
@@ -40,6 +42,7 @@ class InferencePipeline:
         static_data_path: str,
         normalization_constants_path: str,
         model_path: Optional[str] = None,
+        expected_feature_map_path: Optional[str] = None,
         use_ray: bool = False,
     ):
         """Initialize the inference pipeline."""
@@ -49,6 +52,7 @@ class InferencePipeline:
             graph_path=graph_path,
             static_data_path=static_data_path,
             normalization_constants_path=normalization_constants_path,
+            expected_feature_map_path=expected_feature_map_path,
             use_ray=use_ray,
         )
 
@@ -275,6 +279,7 @@ class InferencePipeline:
         events_path: str,
         incidents_path: str,
         output_path: Optional[str] = None,
+        expected_feature_map_path: Optional[str] = None,
     ) -> dict:
         """
         Run inference on provided data.
@@ -286,6 +291,11 @@ class InferencePipeline:
         logger.info("Starting inference...")
 
         try:
+            # Update expected feature map if provided per-call
+            if expected_feature_map_path and Path(expected_feature_map_path).exists():
+                with open(expected_feature_map_path, "r") as f:
+                    self.loader.expected_feature_map = json.load(f)
+
             # Load and prepare data
             logger.info("Loading data...")
             load_start = time.time()
@@ -302,6 +312,16 @@ class InferencePipeline:
 
             load_time = time.time() - load_start
             logger.info(f"Data loaded in {load_time:.2f}s - {len(batches)} batch(es)")
+            if batches:
+                logger.info(
+                    "First batch shapes: x_static=%s x_dyn_past=%s x_dyn_future=%s x_weather=%s",
+                    tuple(batches[0].x_static.shape),
+                    tuple(batches[0].x_dynamic_past.shape),
+                    tuple(batches[0].x_dynamic_future.shape),
+                    tuple(getattr(batches[0], "x_weather").shape)
+                    if getattr(batches[0], "x_weather", None) is not None
+                    else None,
+                )
 
             # Run model inference if model is available
             predictions = None
@@ -315,15 +335,56 @@ class InferencePipeline:
                 predictions = []
                 predictions_denorm = []
                 with torch.no_grad():
-                    for i, batch in enumerate(batches):
+                    for i, batch in enumerate(tqdm(batches, desc="Inference batches")):
                         logger.debug(f"Processing batch {i + 1}/{len(batches)}")
 
+                        x_static = batch.x_static
+                        x_dyn_past = batch.x_dynamic_past.unsqueeze(0).permute(
+                            0, 2, 1, 3
+                        )
+                        x_dyn_future = batch.x_dynamic_future.unsqueeze(0).permute(
+                            0, 2, 1, 3
+                        )
+                        if getattr(batch, "x_weather", None) is not None:
+                            x_weather = batch.x_weather.unsqueeze(0).permute(
+                                0, 2, 1, 3
+                            )
+                            x_dyn_past = torch.cat([x_dyn_past, x_weather], dim=-1)
+                        else:
+                            x_weather = None
+
+                        logger.info(
+                            "Batch %s shapes: x_static=%s x_dyn_past=%s x_dyn_future=%s x_weather=%s",
+                            i + 1,
+                            tuple(x_static.shape),
+                            tuple(x_dyn_past.shape),
+                            tuple(x_dyn_future.shape),
+                            tuple(x_weather.shape) if x_weather is not None else None,
+                        )
+
+                        batch_forward_start = time.time()
+                        logger.info(
+                            "Batch %s entering model forward at %.3fs since load",
+                            i + 1,
+                            batch_forward_start - load_start,
+                        )
+                        model_device = next(self.model.parameters()).device
+                        edge_index = batch.edge_index.to(model_device)
+                        x_static = x_static.to(model_device)
+                        x_dyn_past = x_dyn_past.to(model_device)
+                        x_dyn_future = x_dyn_future.to(model_device)
+
                         pred = self.model(
-                            x_static=batch.x_static.unsqueeze(0),
-                            x_dynamic_past=batch.x_dynamic_past.unsqueeze(0),
-                            x_dynamic_future=batch.x_dynamic_future.unsqueeze(0),
-                            x_weather=batch.x_weather.unsqueeze(0),
-                            edge_index=batch.edge_index,
+                            edge_index,
+                            x_static,
+                            x_dyn_past,
+                            x_dyn_future,
+                        )
+                        batch_forward_end = time.time()
+                        logger.info(
+                            "Batch %s exited model forward in %.3fs",
+                            i + 1,
+                            batch_forward_end - batch_forward_start,
                         )
 
                         # De-normalize predictions to actual values
