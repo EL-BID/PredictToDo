@@ -12,7 +12,10 @@ Key differences from training DataLoader:
 4. Focuses on latest time window for inference
 """
 
+import json
+import logging
 import pickle
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -29,6 +32,8 @@ try:
     RAY_AVAILABLE = True
 except ImportError:
     RAY_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 
 class InferenceDataLoader:
@@ -53,6 +58,7 @@ class InferenceDataLoader:
         normalization_constants_path: Optional[str] = None,
         neighbor_features_path: Optional[str] = None,
         weather_stations_path: Optional[str] = None,
+        expected_feature_map_path: Optional[str] = None,
         use_ray: bool = False,
     ):
         """
@@ -67,6 +73,7 @@ class InferenceDataLoader:
             normalization_constants_path: Path to normalization constants pickle
             neighbor_features_path: Path to neighbor features for imputation
             weather_stations_path: Path to weather stations mapping
+            expected_feature_map_path: Path to JSON with expected feature columns
             use_ray: Whether to use Ray for parallel processing
         """
         self.in_timesteps = in_timesteps
@@ -106,6 +113,12 @@ class InferenceDataLoader:
             with open(weather_stations_path, "rb") as f:
                 self.weather_stations = pickle.load(f)
 
+        # Load expected feature map (optional)
+        self.expected_feature_map = None
+        if expected_feature_map_path and Path(expected_feature_map_path).exists():
+            with open(expected_feature_map_path, "r") as f:
+                self.expected_feature_map = json.load(f)
+
         # Initialize Ray if requested
         if self.use_ray:
             if not ray.is_initialized():
@@ -116,6 +129,48 @@ class InferenceDataLoader:
         self.num_weather_features = (
             4  # wind_direction, humidity, wind_speed, precipitation
         )
+
+        # Canonical feature sets for minimal loading
+        self._jams_feature_cols = [
+            "vel_min",
+            "vel_mean",
+            "vel_max",
+            "level_min",
+            "level_mean",
+            "level_max",
+            "delay_min",
+            "delay_sum",
+            "delay_max",
+            "count_jams",
+        ]
+
+    def _columns_for_dataset(self, key: str) -> Optional[list[str]]:
+        """Return minimal columns required for each dataset."""
+        if key == "jams":
+            return ["id_mvi", "timeframe"] + self._jams_feature_cols
+        if key == "irregularities":
+            expected = self._get_expected_cols("irregularities")
+            if expected is None:
+                return None
+            return ["id_mvi", "timeframe"] + expected
+        if key == "events":
+            expected = self._get_expected_cols("events")
+            if expected is None:
+                return None
+            # events may use road_id or id_vial
+            return ["timeframe", "road_id", "id_vial"] + expected
+        if key == "incidents":
+            expected = self._get_expected_cols("incidents")
+            if expected is None:
+                return None
+            return ["timeframe", "road_id", "id_mvi"] + expected
+        if key == "weather":
+            return ["timestamp_local", "tipo_sensor", "VALORLECTURA_mean"]
+        if key == "pmt_puntos":
+            return ["road_id", "timeframe", "coi_puntos"]
+        if key == "pmt_tramos":
+            return ["road_id", "timeframe", "coi_tramo"]
+        return None
 
     def _load_graph(
         self, graph_path: str
@@ -172,6 +227,13 @@ class InferenceDataLoader:
                 static_norm_values[feature_idx] = static_norm[feature_name]
 
         self.static_norm_tensor = static_norm_values
+
+    def _get_expected_cols(self, key: str) -> Optional[list[str]]:
+        """Return expected feature columns for a dataset key, if provided."""
+        if not self.expected_feature_map:
+            return None
+        cols = self.expected_feature_map.get(key)
+        return cols if isinstance(cols, list) else None
 
     def load_and_prepare_batch(
         self,
@@ -261,25 +323,60 @@ class InferenceDataLoader:
         incidents_path = str(Path(incidents_path).resolve())
 
         @ray.remote
-        def load_parquet(path: str) -> pd.DataFrame:
+        def load_parquet(path: str, columns: Optional[list[str]]) -> pd.DataFrame:
             """Ray remote function to load parquet file."""
             import pandas as pd
+            import pyarrow.parquet as pq
 
+            if columns:
+                schema_cols = set(pq.ParquetFile(path).schema.names)
+                filtered = [c for c in columns if c in schema_cols]
+                return pd.read_parquet(path, columns=filtered)
             return pd.read_parquet(path)
 
         # Launch parallel loading
+        expected_cols = {
+            "jams": self._columns_for_dataset("jams"),
+            "irregularities": self._columns_for_dataset("irregularities"),
+            "weather": self._columns_for_dataset("weather"),
+            "pmt_puntos": self._columns_for_dataset("pmt_puntos"),
+            "pmt_tramos": self._columns_for_dataset("pmt_tramos"),
+            "events": self._columns_for_dataset("events"),
+            "incidents": self._columns_for_dataset("incidents"),
+        }
+
         futures = {
-            "jams": load_parquet.remote(jams_path),
-            "irregularities": load_parquet.remote(irregularities_path),
-            "weather": load_parquet.remote(weather_path),
-            "pmt_puntos": load_parquet.remote(pmt_puntos_path),
-            "pmt_tramos": load_parquet.remote(pmt_tramos_path),
-            "events": load_parquet.remote(events_path),
-            "incidents": load_parquet.remote(incidents_path),
+            "jams": load_parquet.remote(jams_path, expected_cols["jams"]),
+            "irregularities": load_parquet.remote(
+                irregularities_path, expected_cols["irregularities"]
+            ),
+            "weather": load_parquet.remote(weather_path, expected_cols["weather"]),
+            "pmt_puntos": load_parquet.remote(
+                pmt_puntos_path, expected_cols["pmt_puntos"]
+            ),
+            "pmt_tramos": load_parquet.remote(
+                pmt_tramos_path, expected_cols["pmt_tramos"]
+            ),
+            "events": load_parquet.remote(events_path, expected_cols["events"]),
+            "incidents": load_parquet.remote(
+                incidents_path, expected_cols["incidents"]
+            ),
         }
 
         # Collect results
-        data_dict = {key: ray.get(future) for key, future in futures.items()}
+        data_dict = {}
+        for key, future in futures.items():
+            t0 = time.time()
+            df = ray.get(future)
+            df = self._ensure_expected_columns(df, expected_cols.get(key))
+            data_dict[key] = df
+            logger.info(
+                "Loaded %s: rows=%s cols=%s in %.2fs",
+                key,
+                len(df),
+                len(df.columns),
+                time.time() - t0,
+            )
 
         return data_dict
 
@@ -294,17 +391,59 @@ class InferenceDataLoader:
         incidents_path: str,
     ) -> dict[str, pd.DataFrame]:
         """Load data sequentially (fallback when Ray is not available)."""
-        data_dict = {
-            "jams": pd.read_parquet(jams_path),
-            "irregularities": pd.read_parquet(irregularities_path),
-            "weather": pd.read_parquet(weather_path),
-            "pmt_puntos": pd.read_parquet(pmt_puntos_path),
-            "pmt_tramos": pd.read_parquet(pmt_tramos_path),
-            "events": pd.read_parquet(events_path),
-            "incidents": pd.read_parquet(incidents_path),
-        }
+        data_dict = {}
+        for key, path in [
+            ("jams", jams_path),
+            ("irregularities", irregularities_path),
+            ("weather", weather_path),
+            ("pmt_puntos", pmt_puntos_path),
+            ("pmt_tramos", pmt_tramos_path),
+            ("events", events_path),
+            ("incidents", incidents_path),
+        ]:
+            cols = self._columns_for_dataset(key)
+            t0 = time.time()
+            if cols:
+                cols = self._filter_existing_columns(path, cols)
+                df = pd.read_parquet(path, columns=cols)
+            else:
+                df = pd.read_parquet(path)
+            df = self._ensure_expected_columns(df, self._columns_for_dataset(key))
+            data_dict[key] = df
+            logger.info(
+                "Loaded %s: rows=%s cols=%s in %.2fs",
+                key,
+                len(df),
+                len(df.columns),
+                time.time() - t0,
+            )
 
         return data_dict
+
+    @staticmethod
+    def _filter_existing_columns(path: str, cols: list[str]) -> list[str]:
+        import pyarrow.parquet as pq
+
+        if not cols:
+            return cols
+        schema_cols = set(pq.ParquetFile(path).schema.names)
+        return [c for c in cols if c in schema_cols]
+
+    def _ensure_expected_columns(
+        self, df: pd.DataFrame, expected_cols: Optional[list[str]]
+    ) -> pd.DataFrame:
+        if not expected_cols:
+            return df
+
+        # Never auto-fill ID/index columns; missing IDs should not be synthesized.
+        id_cols = {"road_id", "id_vial", "id_mvi"}
+        cols_to_check = [c for c in expected_cols if c not in id_cols]
+        missing = [c for c in cols_to_check if c not in df.columns]
+        if missing:
+            logger.warning("Missing columns filled with 0: %s", missing[:10])
+            for col in missing:
+                df[col] = 0.0
+        return df
 
     def _get_latest_timestamp(self, data_dict: dict[str, pd.DataFrame]) -> pd.Timestamp:
         """Get the latest timestamp across all data sources."""
@@ -421,12 +560,17 @@ class InferenceDataLoader:
         # We'll dynamically determine feature counts as we process
 
         # Process jams (past only)
-        jams_features = self._process_jams(data_dict["jams"], time_index)
+        jams_features = self._process_jams(
+            data_dict["jams"],
+            time_index,
+            expected_cols=self._get_expected_cols("jams"),
+        )
 
         # Process irregularities (past only)
         irreg_features = self._process_irregularities(
             data_dict["irregularities"],
             time_index,
+            expected_cols=self._get_expected_cols("irregularities"),
         )
 
         # Process weather (past only)
@@ -440,16 +584,23 @@ class InferenceDataLoader:
             future_time_index,
         )
 
-        # Process events
+        # Process events (past + future)
         events_features = self._process_events(
             data_dict["events"],
             time_index,
+            expected_cols=self._get_expected_cols("events"),
+        )
+        events_features_future = self._process_events(
+            data_dict["events"],
+            future_time_index,
+            expected_cols=self._get_expected_cols("events"),
         )
 
         # Process incidents
         incidents_features = self._process_incidents(
             data_dict["incidents"],
             time_index,
+            expected_cols=self._get_expected_cols("incidents"),
         )
 
         # Concatenate all past features
@@ -464,8 +615,11 @@ class InferenceDataLoader:
             dim=2,  # Feature dimension
         )
 
-        # Future features (only PMTs for now)
-        x_dynamic_future = pmt_features_future
+        # Future features: PMTs + events
+        x_dynamic_future = torch.cat(
+            [pmt_features_future, events_features_future],
+            dim=2,
+        )
 
         return {
             "x_dynamic_past": x_dynamic_past,
@@ -482,15 +636,15 @@ class InferenceDataLoader:
         """Process features in parallel using Ray."""
 
         @ray.remote
-        def process_jams_remote(df, time_idx, node_to_id, num_nodes):
+        def process_jams_remote(df, time_idx, node_to_id, num_nodes, expected_cols):
             return InferenceDataLoader._process_jams_static(
-                df, time_idx, node_to_id, num_nodes
+                df, time_idx, node_to_id, num_nodes, expected_cols
             )
 
         @ray.remote
-        def process_irreg_remote(df, time_idx, node_to_id, num_nodes):
+        def process_irreg_remote(df, time_idx, node_to_id, num_nodes, expected_cols):
             return InferenceDataLoader._process_irregularities_static(
-                df, time_idx, node_to_id, num_nodes
+                df, time_idx, node_to_id, num_nodes, expected_cols
             )
 
         @ray.remote
@@ -505,6 +659,7 @@ class InferenceDataLoader:
             time_index,
             self.node_to_id,
             self.num_nodes,
+            self._get_expected_cols("jams"),
         )
 
         irreg_future = process_irreg_remote.remote(
@@ -512,6 +667,7 @@ class InferenceDataLoader:
             time_index,
             self.node_to_id,
             self.num_nodes,
+            self._get_expected_cols("irregularities"),
         )
 
         weather_future = process_weather_remote.remote(
@@ -534,16 +690,23 @@ class InferenceDataLoader:
         irreg_features = ray.get(irreg_future)
         weather_features = ray.get(weather_future)
 
-        # Process events
+        # Process events (past + future)
         events_features = self._process_events(
             data_dict["events"],
             time_index,
+            expected_cols=self._get_expected_cols("events"),
+        )
+        events_features_future = self._process_events(
+            data_dict["events"],
+            future_time_index,
+            expected_cols=self._get_expected_cols("events"),
         )
 
         # Process incidents
         incidents_features = self._process_incidents(
             data_dict["incidents"],
             time_index,
+            expected_cols=self._get_expected_cols("incidents"),
         )
 
         # Concatenate all past features
@@ -560,16 +723,22 @@ class InferenceDataLoader:
 
         return {
             "x_dynamic_past": x_dynamic_past,
-            "x_dynamic_future": pmt_features_future,
+            "x_dynamic_future": torch.cat(
+                [pmt_features_future, events_features_future],
+                dim=2,
+            ),
             "x_weather": weather_features,
         }
 
     def _process_jams(
-        self, df: pd.DataFrame, time_index: pd.DatetimeIndex
+        self,
+        df: pd.DataFrame,
+        time_index: pd.DatetimeIndex,
+        expected_cols: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Process jams data into tensor format."""
         return self._process_jams_static(
-            df, time_index, self.node_to_id, self.num_nodes
+            df, time_index, self.node_to_id, self.num_nodes, expected_cols
         )
 
     @staticmethod
@@ -578,11 +747,12 @@ class InferenceDataLoader:
         time_index: pd.DatetimeIndex,
         node_to_id: dict[str, int],
         num_nodes: int,
+        expected_cols: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Static method for processing jams (can be called by Ray)."""
         # Jams features: vel_min, vel_mean, vel_max, level_min, level_mean,
         # level_max, delay_min, delay_sum, delay_max, count_jams
-        jam_feature_cols = [
+        jam_feature_cols = expected_cols or [
             "vel_min",
             "vel_mean",
             "vel_max",
@@ -634,11 +804,14 @@ class InferenceDataLoader:
         return tensor
 
     def _process_irregularities(
-        self, df: pd.DataFrame, time_index: pd.DatetimeIndex
+        self,
+        df: pd.DataFrame,
+        time_index: pd.DatetimeIndex,
+        expected_cols: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Process irregularities data into tensor format."""
         return self._process_irregularities_static(
-            df, time_index, self.node_to_id, self.num_nodes
+            df, time_index, self.node_to_id, self.num_nodes, expected_cols
         )
 
     @staticmethod
@@ -647,11 +820,16 @@ class InferenceDataLoader:
         time_index: pd.DatetimeIndex,
         node_to_id: dict[str, int],
         num_nodes: int,
+        expected_cols: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Static method for processing irregularities."""
         # Use all columns except id_mvi and timeframe
         exclude_cols = {"id_mvi", "timeframe"}
-        feature_cols = [col for col in df.columns if col not in exclude_cols]
+        feature_cols = (
+            expected_cols
+            if expected_cols is not None
+            else [col for col in df.columns if col not in exclude_cols]
+        )
 
         num_features = len(feature_cols)
         num_timesteps = len(time_index)
@@ -692,11 +870,14 @@ class InferenceDataLoader:
         return tensor
 
     def _process_events(
-        self, df: pd.DataFrame, time_index: pd.DatetimeIndex
+        self,
+        df: pd.DataFrame,
+        time_index: pd.DatetimeIndex,
+        expected_cols: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Process events data into tensor format."""
         return self._process_events_static(
-            df, time_index, self.node_to_id, self.num_nodes
+            df, time_index, self.node_to_id, self.num_nodes, expected_cols
         )
 
     @staticmethod
@@ -705,6 +886,7 @@ class InferenceDataLoader:
         time_index: pd.DatetimeIndex,
         node_to_id: dict[str, int],
         num_nodes: int,
+        expected_cols: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Static method for processing events data."""
         # Determine the road id column name (can be 'road_id' or 'id_vial')
@@ -720,7 +902,11 @@ class InferenceDataLoader:
 
         # Use all columns except road_id and timeframe
         exclude_cols = {road_id_col, "timeframe"}
-        feature_cols = [col for col in df.columns if col not in exclude_cols]
+        feature_cols = (
+            expected_cols
+            if expected_cols is not None
+            else [col for col in df.columns if col not in exclude_cols]
+        )
 
         # If no feature columns, return zeros
         if not feature_cols:
@@ -768,11 +954,14 @@ class InferenceDataLoader:
         return tensor
 
     def _process_incidents(
-        self, df: pd.DataFrame, time_index: pd.DatetimeIndex
+        self,
+        df: pd.DataFrame,
+        time_index: pd.DatetimeIndex,
+        expected_cols: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Process incidents data into tensor format."""
         return self._process_incidents_static(
-            df, time_index, self.node_to_id, self.num_nodes
+            df, time_index, self.node_to_id, self.num_nodes, expected_cols
         )
 
     @staticmethod
@@ -781,6 +970,7 @@ class InferenceDataLoader:
         time_index: pd.DatetimeIndex,
         node_to_id: dict[str, int],
         num_nodes: int,
+        expected_cols: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Static method for processing incidents data.
 
@@ -803,10 +993,15 @@ class InferenceDataLoader:
 
         # Use all columns except road_id and timeframe
         exclude_cols = {road_id_col, "timeframe"}
-        feature_cols = [col for col in df.columns if col not in exclude_cols]
+        feature_cols = (
+            expected_cols
+            if expected_cols is not None
+            else [col for col in df.columns if col not in exclude_cols]
+        )
 
-        # Sort feature columns for consistent ordering
-        feature_cols = sorted(feature_cols)
+        # Sort feature columns for consistent ordering (only when inferred)
+        if expected_cols is None:
+            feature_cols = sorted(feature_cols)
 
         # If no feature columns, return zeros
         if not feature_cols:
@@ -941,8 +1136,8 @@ class InferenceDataLoader:
         Returns:
             Tuple of (past_features, future_features)
         """
-        # PMT features: coi_parques, coi_puntos (from puntos), coi_tramo, coos_punto (from tramos)
-        num_features = 4
+        # PMT features: coi_puntos (from puntos), coi_tramo (from tramos)
+        num_features = 2
         num_timesteps_past = len(time_index)
         num_timesteps_future = len(future_time_index)
 
@@ -950,7 +1145,7 @@ class InferenceDataLoader:
         tensor_past = torch.zeros(self.num_nodes, num_timesteps_past, num_features)
         tensor_future = torch.zeros(self.num_nodes, num_timesteps_future, num_features)
 
-        # Process puntos (features 0 and 1)
+        # Process puntos (feature 0)
         df_puntos = df_puntos.copy()
         df_puntos["timeframe"] = pd.to_datetime(df_puntos["timeframe"])
 
@@ -969,8 +1164,7 @@ class InferenceDataLoader:
             if time_idx is None:
                 continue
 
-            tensor_past[node_idx, time_idx, 0] = float(row.get("coi_parques", 0))
-            tensor_past[node_idx, time_idx, 1] = float(row.get("coi_puntos", 0))
+            tensor_past[node_idx, time_idx, 0] = float(row.get("coi_puntos", 0))
 
         # Future window
         df_future = df_puntos[df_puntos["timeframe"].isin(future_time_index)]
@@ -987,10 +1181,9 @@ class InferenceDataLoader:
             if time_idx is None:
                 continue
 
-            tensor_future[node_idx, time_idx, 0] = float(row.get("coi_parques", 0))
-            tensor_future[node_idx, time_idx, 1] = float(row.get("coi_puntos", 0))
+            tensor_future[node_idx, time_idx, 0] = float(row.get("coi_puntos", 0))
 
-        # Process tramos (features 2 and 3)
+        # Process tramos (feature 1)
         df_tramos = df_tramos.copy()
         df_tramos["timeframe"] = pd.to_datetime(df_tramos["timeframe"])
 
@@ -1008,8 +1201,7 @@ class InferenceDataLoader:
             if time_idx is None:
                 continue
 
-            tensor_past[node_idx, time_idx, 2] = float(row.get("coi_tramo", 0))
-            tensor_past[node_idx, time_idx, 3] = float(row.get("coos_punto", 0))
+            tensor_past[node_idx, time_idx, 1] = float(row.get("coi_tramo", 0))
 
         # Future window
         df_future = df_tramos[df_tramos["timeframe"].isin(future_time_index)]
@@ -1025,8 +1217,7 @@ class InferenceDataLoader:
             if time_idx is None:
                 continue
 
-            tensor_future[node_idx, time_idx, 2] = float(row.get("coi_tramo", 0))
-            tensor_future[node_idx, time_idx, 3] = float(row.get("coos_punto", 0))
+            tensor_future[node_idx, time_idx, 1] = float(row.get("coi_tramo", 0))
 
         return tensor_past, tensor_future
 
