@@ -1,33 +1,41 @@
-import argparse
-import logging
 import math
-import os
-import pickle
-import shutil
+import os  # noqa: I001
 import sys
 import time
+import logging
+import argparse
+import pickle
+import shutil
+import tempfile
+from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
-from pathlib import Path
+import json
 
+import boto3
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.amp import GradScaler
 from tqdm.auto import tqdm
 
 # Add project root to path to allow package imports when run as a script.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.models.gnn_temporal import GNN_Temporal_Model
 from src.sparse_dataloader import TrafficDataset
 from src.temporal_split import temporal_train_test_split
-from src.training.losses import masked_mse
 from src.training_utils import (
-    EpochUniquePicker,
-    SeededBatchSampler,
-    build_node_50_picker,
     pad_collate,
+    build_node_50_picker,
+    EpochUniquePicker,
+    PlannedSeedTimeBatchSampler,
+    SeededBatchSampler,
+    SeedTimeEpochPlanner,
 )
+from src.models.gnn_temporal import GNN_Temporal_Model
+from src.training.loop import train_one_epoch
+from src.training.losses import masked_mse
+from src.utils.logging import log
 
 LOG_LEVEL = int(os.getenv("SM_LOG_LEVEL", logging.INFO))
 CHANNEL_TRAIN = os.getenv("SM_CHANNEL_TRAIN", "/opt/ml/input/data/train")
@@ -35,9 +43,7 @@ CHANNEL_VALIDATION = os.getenv("SM_CHANNEL_VALIDATION", "/opt/ml/input/data/vali
 MODEL_DIR = os.getenv("SM_MODEL_DIR", "/opt/ml/model")
 CHECKPOINT_DIR = os.getenv("SM_CHECKPOINTS_PATH", "/opt/ml/checkpoints")
 
-logging.basicConfig(
-    level=LOG_LEVEL, format="[%(asctime)s] %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=LOG_LEVEL, format="[%(asctime)s] %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -56,9 +62,7 @@ def _tensor_stats(t: torch.Tensor) -> dict[str, float]:
     finite = torch.isfinite(t)
     nan_count = int((~finite & torch.isnan(t)).sum().item())
     inf_count = int((~finite & torch.isinf(t)).sum().item())
-    max_abs = float(
-        torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0).abs().max().item()
-    )
+    max_abs = float(torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0).abs().max().item())
     return {"nan": nan_count, "inf": inf_count, "max_abs": max_abs}
 
 
@@ -120,6 +124,215 @@ def _maybe_split_losses(
     return losses
 
 
+def _extract_level_tensors(
+    preds: torch.Tensor, y_target: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if y_target.dim() == 4 and y_target.size(-1) >= 1:
+        level_target = y_target[..., 0]
+        if preds.shape == level_target.shape:
+            level_pred = preds
+        elif preds.dim() == 4 and preds.size(-1) >= 1:
+            level_pred = preds[..., 0]
+        else:
+            raise ValueError("Could not align prediction tensor with level target.")
+        return level_pred, level_target
+    raise ValueError("Target tensor does not contain a level channel.")
+
+
+def _get_level_scale(target_norm_constants: dict[str, float] | None) -> float:
+    if not target_norm_constants:
+        return 1.0
+    return float(target_norm_constants.get("mean_jam_level", 1.0))
+
+
+def _to_real_level_space(
+    level_pred: torch.Tensor,
+    level_target: torch.Tensor,
+    level_scale: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    scale = float(level_scale)
+    if scale == 1.0:
+        return level_pred, level_target
+    return level_pred * scale, level_target * scale
+
+
+def _compute_operational_metrics(
+    level_pred: torch.Tensor,
+    level_target: torch.Tensor,
+    prefix: str = "val",
+    num_levels: int = 6,
+    level_scale: float = 1.0,
+) -> dict[str, float]:
+    pred_real, target_real = _to_real_level_space(level_pred, level_target, level_scale)
+    pred = pred_real.detach().reshape(-1).float().cpu()
+    target = target_real.detach().reshape(-1).float().cpu()
+    finite_mask = torch.isfinite(pred) & torch.isfinite(target)
+    pred = pred[finite_mask]
+    target = target[finite_mask]
+
+    if pred.numel() == 0:
+        return {}
+
+    pred_round = pred.round().clamp(0, num_levels - 1).to(torch.int64)
+    target_round = target.round().clamp(0, num_levels - 1).to(torch.int64)
+    abs_diff = (pred - target).abs()
+    class_diff = (pred_round - target_round).abs()
+
+    metrics: dict[str, float] = {
+        f"{prefix}_mae_level": float(abs_diff.mean().item()),
+        f"{prefix}_accuracy_exact": float((pred_round == target_round).float().mean().item()),
+        f"{prefix}_accuracy_pm1": float((class_diff <= 1).float().mean().item()),
+        f"{prefix}_class_distance_mean": float(class_diff.float().mean().item()),
+        f"{prefix}_class_distance_ge2_rate": float((class_diff >= 2).float().mean().item()),
+        f"{prefix}_class_distance_ge3_rate": float((class_diff >= 3).float().mean().item()),
+    }
+
+    for distance in range(num_levels):
+        metrics[f"{prefix}_class_distance_eq_{distance}_rate"] = float(
+            (class_diff == distance).float().mean().item()
+        )
+
+    for level in range(num_levels):
+        level_mask = target_round == level
+        level_count = int(level_mask.sum().item())
+        metrics[f"{prefix}_level_{level}_count"] = float(level_count)
+        if level_count == 0:
+            continue
+        level_abs_diff = abs_diff[level_mask]
+        level_class_diff = class_diff[level_mask]
+        level_pred_round = pred_round[level_mask]
+        level_target_round = target_round[level_mask]
+        metrics[f"{prefix}_level_{level}_mae"] = float(level_abs_diff.mean().item())
+        metrics[f"{prefix}_level_{level}_class_distance_mean"] = float(
+            level_class_diff.float().mean().item()
+        )
+        metrics[f"{prefix}_level_{level}_accuracy_exact"] = float(
+            (level_pred_round == level_target_round).float().mean().item()
+        )
+        metrics[f"{prefix}_level_{level}_accuracy_pm1"] = float(
+            (level_class_diff <= 1).float().mean().item()
+        )
+        metrics[f"{prefix}_level_{level}_class_distance_ge2_rate"] = float(
+            (level_class_diff >= 2).float().mean().item()
+        )
+
+    return metrics
+
+
+def _init_operational_accumulator(num_levels: int = 6) -> dict:
+    return {
+        "num_levels": int(num_levels),
+        "total_count": 0,
+        "abs_diff_sum": 0.0,
+        "exact_hits": 0.0,
+        "pm1_hits": 0.0,
+        "class_diff_sum": 0.0,
+        "ge2_hits": 0.0,
+        "ge3_hits": 0.0,
+        "distance_eq_counts": [0.0 for _ in range(num_levels)],
+        "level_count": [0.0 for _ in range(num_levels)],
+        "level_abs_diff_sum": [0.0 for _ in range(num_levels)],
+        "level_class_diff_sum": [0.0 for _ in range(num_levels)],
+        "level_exact_hits": [0.0 for _ in range(num_levels)],
+        "level_pm1_hits": [0.0 for _ in range(num_levels)],
+        "level_ge2_hits": [0.0 for _ in range(num_levels)],
+    }
+
+
+def _update_operational_accumulator(
+    acc: dict,
+    level_pred: torch.Tensor,
+    level_target: torch.Tensor,
+    level_scale: float = 1.0,
+) -> None:
+    num_levels = int(acc["num_levels"])
+    pred_real, target_real = _to_real_level_space(level_pred, level_target, level_scale)
+    pred = pred_real.detach().reshape(-1).float().cpu()
+    target = target_real.detach().reshape(-1).float().cpu()
+    finite_mask = torch.isfinite(pred) & torch.isfinite(target)
+    pred = pred[finite_mask]
+    target = target[finite_mask]
+
+    if pred.numel() == 0:
+        return
+
+    pred_round = pred.round().clamp(0, num_levels - 1).to(torch.int64)
+    target_round = target.round().clamp(0, num_levels - 1).to(torch.int64)
+    abs_diff = (pred - target).abs()
+    class_diff = (pred_round - target_round).abs()
+
+    acc["total_count"] += int(pred.numel())
+    acc["abs_diff_sum"] += float(abs_diff.sum().item())
+    acc["exact_hits"] += float((pred_round == target_round).sum().item())
+    acc["pm1_hits"] += float((class_diff <= 1).sum().item())
+    acc["class_diff_sum"] += float(class_diff.float().sum().item())
+    acc["ge2_hits"] += float((class_diff >= 2).sum().item())
+    acc["ge3_hits"] += float((class_diff >= 3).sum().item())
+
+    for distance in range(num_levels):
+        acc["distance_eq_counts"][distance] += float((class_diff == distance).sum().item())
+
+    for level in range(num_levels):
+        level_mask = target_round == level
+        level_count = int(level_mask.sum().item())
+        if level_count == 0:
+            continue
+        level_abs_diff = abs_diff[level_mask]
+        level_class_diff = class_diff[level_mask]
+        level_pred_round = pred_round[level_mask]
+        level_target_round = target_round[level_mask]
+        acc["level_count"][level] += float(level_count)
+        acc["level_abs_diff_sum"][level] += float(level_abs_diff.sum().item())
+        acc["level_class_diff_sum"][level] += float(level_class_diff.float().sum().item())
+        acc["level_exact_hits"][level] += float((level_pred_round == level_target_round).sum().item())
+        acc["level_pm1_hits"][level] += float((level_class_diff <= 1).sum().item())
+        acc["level_ge2_hits"][level] += float((level_class_diff >= 2).sum().item())
+
+
+def _finalize_operational_accumulator(acc: dict, prefix: str = "val") -> dict[str, float]:
+    total_count = float(acc["total_count"])
+    if total_count <= 0:
+        return {}
+
+    num_levels = int(acc["num_levels"])
+    metrics: dict[str, float] = {
+        f"{prefix}_mae_level": float(acc["abs_diff_sum"] / total_count),
+        f"{prefix}_accuracy_exact": float(acc["exact_hits"] / total_count),
+        f"{prefix}_accuracy_pm1": float(acc["pm1_hits"] / total_count),
+        f"{prefix}_class_distance_mean": float(acc["class_diff_sum"] / total_count),
+        f"{prefix}_class_distance_ge2_rate": float(acc["ge2_hits"] / total_count),
+        f"{prefix}_class_distance_ge3_rate": float(acc["ge3_hits"] / total_count),
+    }
+
+    for distance in range(num_levels):
+        metrics[f"{prefix}_class_distance_eq_{distance}_rate"] = float(
+            acc["distance_eq_counts"][distance] / total_count
+        )
+
+    for level in range(num_levels):
+        level_count = float(acc["level_count"][level])
+        metrics[f"{prefix}_level_{level}_count"] = level_count
+        if level_count <= 0:
+            continue
+        metrics[f"{prefix}_level_{level}_mae"] = float(
+            acc["level_abs_diff_sum"][level] / level_count
+        )
+        metrics[f"{prefix}_level_{level}_class_distance_mean"] = float(
+            acc["level_class_diff_sum"][level] / level_count
+        )
+        metrics[f"{prefix}_level_{level}_accuracy_exact"] = float(
+            acc["level_exact_hits"][level] / level_count
+        )
+        metrics[f"{prefix}_level_{level}_accuracy_pm1"] = float(
+            acc["level_pm1_hits"][level] / level_count
+        )
+        metrics[f"{prefix}_level_{level}_class_distance_ge2_rate"] = float(
+            acc["level_ge2_hits"][level] / level_count
+        )
+
+    return metrics
+
+
 def _num_batches(num_items: int, batch_size: int, drop_last: bool) -> int:
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
@@ -152,10 +365,15 @@ def _ensure_seed_list_length(seed_list: list[str], num_batches: int) -> list[str
     return seed_list + [seed_list[-1]] * (num_batches - len(seed_list))
 
 
+def _format_bucket_ratios(counts: dict[str, int]) -> dict[str, float]:
+    total = float(sum(counts.values()))
+    if total <= 0:
+        return {k: 0.0 for k in ("high", "medium", "low")}
+    return {k: float(counts.get(k, 0) / total) for k in ("high", "medium", "low")}
+
+
 def parse_args() -> dict:
-    parser = argparse.ArgumentParser(
-        description="SageMaker Training for Traffic Forecasting GNN"
-    )
+    parser = argparse.ArgumentParser(description="SageMaker Training for Traffic Forecasting GNN")
 
     # Hyperparameters
     parser.add_argument(
@@ -237,6 +455,42 @@ def parse_args() -> dict:
         default=None,
     )
     parser.add_argument(
+        "--loss-continuous-type",
+        help="Base regression loss for level channel: huber, mae, mse",
+        type=str,
+        default="huber",
+    )
+    parser.add_argument(
+        "--loss-huber-delta",
+        help="Delta parameter for Huber continuous loss",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--loss-class-ce-lambda",
+        help="Weight for differentiable exact-class alignment term",
+        type=float,
+        default=0.3,
+    )
+    parser.add_argument(
+        "--loss-class-distance-lambda",
+        help="Weight for ordinal class-distance penalty",
+        type=float,
+        default=0.5,
+    )
+    parser.add_argument(
+        "--loss-large-error-threshold",
+        help="Class-distance threshold from which errors are considered large",
+        type=int,
+        default=2,
+    )
+    parser.add_argument(
+        "--loss-large-error-lambda",
+        help="Weight for penalizing large class-distance errors",
+        type=float,
+        default=0.75,
+    )
+    parser.add_argument(
         "--loss-high-level-threshold",
         help="Minimum jam level to apply extra MAE penalty",
         type=int,
@@ -265,6 +519,42 @@ def parse_args() -> dict:
         help="Weight for under-prediction directional penalty",
         type=float,
         default=0.3,
+    )
+    parser.add_argument(
+        "--loss-shape-lambda",
+        help="Weight for node-wise Pearson shape loss over the forecast horizon",
+        type=float,
+        default=0.0,
+    )
+    parser.add_argument(
+        "--loss-shape-min-std",
+        help="Minimum target std in real level space for a node-series to contribute to shape loss",
+        type=float,
+        default=1e-3,
+    )
+    parser.add_argument(
+        "--loss-shape-eps",
+        help="Numerical epsilon used by the Pearson shape loss",
+        type=float,
+        default=1e-6,
+    )
+    parser.add_argument(
+        "--loss-shape-weight-std",
+        help="Weight multiplier for target std in node-wise shape loss weighting",
+        type=float,
+        default=0.75,
+    )
+    parser.add_argument(
+        "--loss-shape-weight-range",
+        help="Weight multiplier for target range in node-wise shape loss weighting",
+        type=float,
+        default=0.25,
+    )
+    parser.add_argument(
+        "--loss-shape-weight-max",
+        help="Weight multiplier for target max level in node-wise shape loss weighting",
+        type=float,
+        default=1.0,
     )
     parser.add_argument(
         "--seeded-batch-sampler",
@@ -338,13 +628,43 @@ def parse_args() -> dict:
         type=int,
         default=0,
     )
+    parser.add_argument(
+        "--feature-trace-path",
+        help="Write JSON trace of feature insertion order (first batch only)",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--seed-time-artifact-path",
+        help="Parquet artifact with precomputed (seed_id, time_idx, bucket) rows for planned seeded batching",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--seed-time-epoch-cycles",
+        help="How many full seed passes to execute per epoch when using seed-time artifact sampling",
+        type=int,
+        default=1,
+    )
+    parser.add_argument(
+        "--seed-time-bucket-target-ratios",
+        help="Target batch composition as high,medium,low ratios when using seed-time artifact sampling",
+        type=str,
+        default="0.45,0.30,0.25",
+    )
+    parser.add_argument(
+        "--seed-time-shuffle-seeds",
+        help="Shuffle seed order within each seed cycle when using seed-time artifact sampling",
+        type=_str2bool,
+        default=True,
+    )
 
     payload = vars(parser.parse_args())
     logger.info(f"Parsed arguments:\n{payload}")
     return payload
 
 
-def check_data_channels() -> Path:
+def check_data_channels() -> tuple[Path, Path]:
     """
     Check if the data channels for training and validation exist.
     In SageMaker, the training data is in SM_CHANNEL_TRAIN containing:
@@ -356,7 +676,7 @@ def check_data_channels() -> Path:
     train_path = Path(CHANNEL_TRAIN)
     if not train_path.exists():
         raise ValueError(f"Training data channel '{CHANNEL_TRAIN}' does not exist.")
-
+    
     logger.info(f"Training data files in {CHANNEL_TRAIN}:")
     for item in sorted(train_path.rglob("*")):
         if item.is_file():
@@ -413,6 +733,72 @@ def _copy_if_exists(src: Path, dst: Path) -> None:
     shutil.copy2(src, dst)
 
 
+def _copy_file(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
+def _resolve_seed_time_artifact_path(
+    artifact_path: str | None,
+    train_path: Path,
+    cache_dir: Path,
+) -> str | None:
+    """
+    Resolve a seed-time artifact path with the following precedence:
+    1. If local path exists, use it.
+    2. If S3 URI is provided, download to local cache.
+    3. If EFS-style train path exists, copy to local cache for consistent local reads.
+    4. If /data/datos_procesados exists, persist a copy there for reuse by later jobs.
+    """
+    if not artifact_path:
+        return None
+
+    artifact_str = str(artifact_path)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    if artifact_str.startswith("s3://"):
+        bucket_and_key = artifact_str[len("s3://") :]
+        bucket, key = bucket_and_key.split("/", 1)
+        local_path = cache_dir / Path(key).name
+        if not local_path.exists():
+            logger.info("Downloading seed-time artifact from S3 to local cache: %s -> %s", artifact_str, local_path)
+            boto3.client("s3").download_file(bucket, key, str(local_path))
+        else:
+            logger.info("Using cached local seed-time artifact: %s", local_path)
+
+        efs_root = Path("/data/datos_procesados")
+        if efs_root.exists():
+            efs_path = efs_root / "seed_time_artifacts" / local_path.name
+            if not efs_path.exists():
+                logger.info("Persisting seed-time artifact to EFS path: %s", efs_path)
+                _copy_file(local_path, efs_path)
+            else:
+                logger.info("Seed-time artifact already present in EFS: %s", efs_path)
+        return str(local_path)
+
+    local_candidate = Path(artifact_str)
+    if local_candidate.exists():
+        if str(local_candidate).startswith(str(train_path)):
+            local_cache_path = cache_dir / local_candidate.name
+            if not local_cache_path.exists():
+                logger.info("Copying seed-time artifact from train/EFS channel to local cache: %s -> %s", local_candidate, local_cache_path)
+                _copy_file(local_candidate, local_cache_path)
+            else:
+                logger.info("Using cached local seed-time artifact copied from train channel: %s", local_cache_path)
+            return str(local_cache_path)
+        return str(local_candidate)
+
+    train_candidate = train_path / artifact_str
+    if train_candidate.exists():
+        local_cache_path = cache_dir / train_candidate.name
+        if not local_cache_path.exists():
+            logger.info("Copying relative seed-time artifact from train channel to local cache: %s -> %s", train_candidate, local_cache_path)
+            _copy_file(train_candidate, local_cache_path)
+        return str(local_cache_path)
+
+    raise FileNotFoundError(f"Could not resolve seed-time artifact path: {artifact_path}")
+
+
 def cache_training_data(
     train_path: Path,
     cache_dir: Path,
@@ -425,9 +811,7 @@ def cache_training_data(
         raise ValueError(f"Sparse datasets directory not found: {sparse_dir}")
 
     dynamic_files = _select_dynamic_files(sparse_dir, use_minimal_datasets)
-    dynamic_metadata = [
-        sparse_dir / f"{f.with_suffix('').name}_metadata.pkl" for f in dynamic_files
-    ]
+    dynamic_metadata = [sparse_dir / f"{f.with_suffix('').name}_metadata.pkl" for f in dynamic_files]
     missing_meta = [str(f) for f in dynamic_metadata if not f.exists()]
     if missing_meta:
         raise ValueError(f"Missing metadata files: {missing_meta}")
@@ -475,48 +859,46 @@ def setup_sagemaker_paths(
     │   └── normalization_constants.pkl
     └── neighbor_features.parquet (optional)
     """
-    paths = {}
-
+    paths = {"train_root": train_path}
+    
     # Graph
     paths["graph"] = train_path / "conectivity_graph" / "road_graph.pickle"
     if not paths["graph"].exists():
         raise ValueError(f"Graph not found: {paths['graph']}")
-
+    
     # Sparse data directory
     sparse_dir = train_path / "sparse_datasets"
     if not sparse_dir.exists():
         raise ValueError(f"Sparse datasets directory not found: {sparse_dir}")
-
+    
     # Static data
     paths["static"] = sparse_dir / "static_dataset.h5"
     if not paths["static"].exists():
         raise ValueError(f"Static data not found: {paths['static']}")
-
+    
     # Dynamic data files
     dynamic_files = _select_dynamic_files(sparse_dir, use_minimal_datasets)
     paths["dynamic"] = dynamic_files
 
     # Metadata files (matching dynamic files)
-    metadata_files = [
-        sparse_dir / f"{f.with_suffix('').name}_metadata.pkl" for f in dynamic_files
-    ]
+    metadata_files = [sparse_dir / f"{f.with_suffix('').name}_metadata.pkl" for f in dynamic_files]
     missing_meta = [str(f) for f in metadata_files if not f.exists()]
     if missing_meta:
         raise ValueError(f"Missing metadata files: {missing_meta}")
     paths["metadata"] = metadata_files
-
+    
     # Target data
     paths["target"] = sparse_dir / "jams_dataset.h5"
     if not paths["target"].exists():
         raise ValueError(f"Target data not found: {paths['target']}")
-
+    
     # Normalization constants
     paths["normalization"] = sparse_dir / "normalization_constants.pkl"
     if not paths["normalization"].exists():
         logger.warning(f"Normalization constants not found: {paths['normalization']}")
         logger.warning("Training will proceed WITHOUT normalization")
         paths["normalization"] = None
-
+    
     # Optional neighbor features
     paths["neighbor_features"] = train_path / "neighbor_features.parquet"
     if not paths["neighbor_features"].exists():
@@ -528,12 +910,12 @@ def setup_sagemaker_paths(
     if not paths["nodes_traffic_info"].exists():
         logger.warning(f"Nodes traffic info not found: {paths['nodes_traffic_info']}")
         paths["nodes_traffic_info"] = None
-
+    
     # Weather data directory (optional)
     if include_weather:
         _required_weather_files(sparse_dir)
     paths["weather_dir"] = sparse_dir
-
+    
     logger.info("SageMaker paths validated successfully")
     return paths
 
@@ -549,15 +931,19 @@ def train_model(args: dict, paths: dict) -> None:
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
-
+    artifact_cache_dir = Path(args.get("cache_dir", "/opt/ml/input/data/cache")) / "seed_time_artifacts"
+    args["seed_time_artifact_path"] = _resolve_seed_time_artifact_path(
+        args.get("seed_time_artifact_path"),
+        train_path=paths["train_root"],
+        cache_dir=artifact_cache_dir,
+    )
+    
     # Debug mode flag
     debug_batches = args.get("debug_batches", None)
     if debug_batches:
-        logger.warning(
-            f"🔴 DEBUG MODE ENABLED: Training/validation limited to {debug_batches} batches"
-        )
+        logger.warning(f"🔴 DEBUG MODE ENABLED: Training/validation limited to {debug_batches} batches")
     sanity_checks = args.get("sanity_checks", False)
-
+    
     # ============ 1. Load Dataset ============
     logger.info("Loading TrafficDataset...")
     traffic_dataset = TrafficDataset(
@@ -569,46 +955,51 @@ def train_model(args: dict, paths: dict) -> None:
         in_timesteps=args["input_seq_len"],
         out_timesteps=args["output_seq_len"],
         future_features=[
-            "coi_puntos",
-            "coi_tramo",
-            "AGLOMERACION",
-            "EMERGENCIA",
-            "MANIFESTACION",
+            "coi_puntos", "coi_tramo", "AGLOMERACION", "EMERGENCIA", "MANIFESTACION"
         ],
         node_batch_size=args["node_batch_size"],
         weather_data_dir=str(paths["weather_dir"]),
         include_weather=args["include_weather"],
-        neighbor_features_path=str(paths["neighbor_features"])
-        if paths["neighbor_features"]
-        else None,
+        neighbor_features_path=str(paths["neighbor_features"]) if paths["neighbor_features"] else None,
         include_velocity_target=args["include_velocity_target"],
-        normalization_constants_path=str(paths["normalization"])
-        if paths["normalization"]
-        else None,
+        normalization_constants_path=str(paths["normalization"]) if paths["normalization"] else None
     )
     logger.info(f"Dataset loaded: {len(traffic_dataset)} samples")
     logger.info(f"  Num nodes: {traffic_dataset.num_nodes}")
     logger.info(f"  Static features: {traffic_dataset.num_static_features}")
     logger.info(f"  Dynamic features: {traffic_dataset.num_dynamic_features}")
-    logger.info(
-        f"  Target features: {traffic_dataset.num_target_features if hasattr(traffic_dataset, 'num_target_features') else 1 + (1 if args['include_velocity_target'] else 0)}"
-    )
+    logger.info(f"  Target features: {traffic_dataset.num_target_features if hasattr(traffic_dataset, 'num_target_features') else 1 + (1 if args['include_velocity_target'] else 0)}")
     logger.info(
         "  include_weather=%s num_weather_features=%s",
         args["include_weather"],
         getattr(traffic_dataset, "num_weather_features", 0),
     )
-
+    level_scale = _get_level_scale(getattr(traffic_dataset, "target_norm_constants", None))
+    logger.info("  level_metric_scale=%s", level_scale)
+    
     # ============ 2. Split Dataset ============
     use_seeded_batches = args.get("seeded_batch_sampler", True)
-    if traffic_dataset.total_timesteps_in_data < traffic_dataset.total_timesteps_window:
+    use_seed_time_artifact_sampler = bool(args.get("seed_time_artifact_path"))
+    total_timesteps_in_data = int(getattr(traffic_dataset, "total_timesteps_in_data", 0))
+    effective_total_timesteps = int(
+        getattr(traffic_dataset, "effective_total_timesteps", total_timesteps_in_data)
+    )
+    total_timesteps_window = int(traffic_dataset.total_timesteps_window)
+    if effective_total_timesteps < total_timesteps_window:
         num_time_windows = 0
     else:
         num_time_windows = (
-            traffic_dataset.total_timesteps_in_data
-            - traffic_dataset.total_timesteps_window
+            effective_total_timesteps
+            - total_timesteps_window
             + 1
         )
+    logger.info(
+        "Temporal window configuration: total_timesteps_in_data=%s, effective_total_timesteps=%s, total_timesteps_window=%s, num_time_windows=%s",
+        total_timesteps_in_data,
+        effective_total_timesteps,
+        total_timesteps_window,
+        num_time_windows,
+    )
     if use_seeded_batches:
         train_end = int(num_time_windows * args["train_ratio"])
         train_time_indices = list(range(train_end))
@@ -632,17 +1023,30 @@ def train_model(args: dict, paths: dict) -> None:
             traffic_dataset,
             train_ratio=args["train_ratio"],
         )
-        logger.info(
-            f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}"
-        )
+        logger.info(f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}")
 
+    seed_time_planner = None
+    if use_seed_time_artifact_sampler:
+        if not use_seeded_batches:
+            raise ValueError("seed-time-artifact-path requires seeded-batch-sampler=True")
+        logger.info("Loading seed-time epoch planner from artifact: %s", args["seed_time_artifact_path"])
+        seed_time_planner = SeedTimeEpochPlanner(
+            artifact_path=args["seed_time_artifact_path"],
+            batch_size=args["batch_size"],
+            bucket_target_ratios=args["seed_time_bucket_target_ratios"],
+            rng_seed=args.get("seeded_batch_seed", 42),
+        )
+        logger.info(
+            "Seed-time planner ready: seeds=%s batch_size=%s batch_bucket_counts=%s",
+            len(seed_time_planner.seed_ids),
+            seed_time_planner.batch_size,
+            seed_time_planner.batch_bucket_counts,
+        )
+    
     # ============ 3. Create DataLoaders ============
     num_workers = int(args.get("num_workers", 0))
     if not use_seeded_batches and num_workers != 0:
-        logger.warning(
-            "num_workers=%s is not supported with per-batch seed rotation. Forcing num_workers=0.",
-            num_workers,
-        )
+        logger.warning("num_workers=%s is not supported with per-batch seed rotation. Forcing num_workers=0.", num_workers)
         num_workers = 0
     logger.info("Using num_workers=%s", num_workers)
     pin_memory = bool(args.get("pin_memory", False))
@@ -661,13 +1065,15 @@ def train_model(args: dict, paths: dict) -> None:
         loader_kwargs["prefetch_factor"] = prefetch_factor
         loader_kwargs["persistent_workers"] = persistent_workers
 
-    future_dim = getattr(traffic_dataset, "num_dynamic_future_features", None)
-    if future_dim is None:
+    future_base_dim = getattr(traffic_dataset, "num_dynamic_future_features", None)
+    if future_base_dim is None:
         raise ValueError("TrafficDataset does not expose num_dynamic_future_features.")
 
     base_dynamic_dim = traffic_dataset.num_dynamic_features
+    temporal_dim = getattr(traffic_dataset, "num_temporal_features", 0) or 0
     weather_dim = getattr(traffic_dataset, "num_weather_features", 0) or 0
-    dynamic_dim = base_dynamic_dim
+    dynamic_dim = base_dynamic_dim + temporal_dim
+    future_dim = future_base_dim + temporal_dim
     if args["include_weather"]:
         if weather_dim > 0:
             logger.info(
@@ -680,9 +1086,10 @@ def train_model(args: dict, paths: dict) -> None:
                 "include_weather=True but num_weather_features is missing or 0."
             )
     logger.info(
-        "Input dims for GNN: static=%s dynamic_base=%s weather=%s dynamic_total=%s future=%s",
+        "Input dims for GNN: static=%s dynamic_base=%s temporal=%s weather=%s dynamic_total=%s future_total=%s",
         traffic_dataset.num_static_features,
         base_dynamic_dim,
+        temporal_dim,
         weather_dim if args["include_weather"] else 0,
         dynamic_dim,
         future_dim,
@@ -695,7 +1102,7 @@ def train_model(args: dict, paths: dict) -> None:
         args["output_seq_len"],
         future_dim,
     )
-
+    
     # ============ 4. Create Model ============
     logger.info(f"Creating {args['model_type']} model...")
     model = GNN_Temporal_Model(
@@ -708,93 +1115,121 @@ def train_model(args: dict, paths: dict) -> None:
         model_type=args["model_type"],
         include_velocity_target=args["include_velocity_target"],
     ).to(device)
-
+    
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(
-        f"Model parameters: {total_params:,} total, {trainable_params:,} trainable"
-    )
-
+    logger.info(f"Model parameters: {total_params:,} total, {trainable_params:,} trainable")
+    
     # ============ 5. Setup Training ============
     optimizer = torch.optim.Adam(model.parameters(), lr=args["learning_rate"])
     loss_fn = nn.MSELoss()
     level_weights = torch.tensor([0.25, 1.0, 2.0, 3.0, 4.0, 5.0])
     grad_clip_norm = args["grad_clip_norm"]
-
+    
     # Seed picker for node rotation
-    base_picker = None
-    if paths.get("nodes_traffic_info"):
-        base_picker = build_node_50_picker(
-            str(paths["nodes_traffic_info"]),
-            top_frac=0.2,
-            seed=42,
-        )
-
-    if base_picker is None:
-        logger.warning("Could not create seed picker, training will use single seed")
+    if seed_time_planner is not None:
         picker = None
+        logger.info("Seed picker disabled because seed-time artifact sampler is active.")
     else:
-        picker = EpochUniquePicker(base_picker, p_top=0.5, on_exhaust="reset")
+        base_picker = None
+        if paths.get("nodes_traffic_info"):
+            base_picker = build_node_50_picker(
+                str(paths["nodes_traffic_info"]),
+                top_frac=0.2,
+                seed=42,
+            )
 
+        if base_picker is None:
+            logger.warning("Could not create seed picker, training will use single seed")
+            picker = None
+        else:
+            picker = EpochUniquePicker(base_picker, p_top=0.5, on_exhaust="reset")
+    
     # Create checkpoint directory
     Path(CHECKPOINT_DIR).mkdir(parents=True, exist_ok=True)
-
+    
     metrics_history = {
         "epoch": [],
         "train_loss": [],
         "val_loss": [],
         "train_time": [],
+        "train_operational": [],
+        "val_operational": [],
     }
-
+    
     # ============ 6. Training Loop ============
     logger.info(f"Starting training for {args['epochs']} epochs...")
-    best_val_loss = float("inf")
-    checkpoint_payload, model_config = dict(), dict()
-
+    best_val_loss = float('inf')
+    
     for epoch in range(args["epochs"]):
         epoch_start = time.time()
         epoch_num = epoch + 1
-
+        
         # Train
-        logger.info(f"\n{'=' * 80}")
+        logger.info(f"\n{'='*80}")
         logger.info(f"Epoch {epoch_num}/{args['epochs']}")
-        logger.info(f"{'=' * 80}")
+        logger.info(f"{'='*80}")
 
         model.train()
         train_loss = 0.0
         train_samples = 0
 
         if use_seeded_batches:
-            if picker is not None:
-                picker.start_epoch()
-            train_batches = _num_batches(
-                len(train_time_indices),  # type: ignore
-                args["batch_size"],
-                args.get("drop_last", False),
-            )
-            if train_batches == 0:
-                raise ValueError(
-                    "No training batches available for the selected time window split."
+            if seed_time_planner is not None:
+                epoch_plan = seed_time_planner.build_epoch_plan(
+                    seed_cycles=args["seed_time_epoch_cycles"],
+                    shuffle_seeds=args["seed_time_shuffle_seeds"],
                 )
-            train_seed_list = _build_seed_list(
-                picker,
-                traffic_dataset.node_seed,
-                train_batches,
-            )
-            traffic_dataset.set_seed_list(train_seed_list)
-            train_loader = DataLoader(
-                train_dataset,
-                batch_sampler=SeededBatchSampler(
-                    seed_list=train_seed_list,
-                    time_indices=train_time_indices,  # type: ignore
-                    num_time_windows=num_time_windows,
-                    batch_size=args["batch_size"],
-                    drop_last=args.get("drop_last", False),
-                    shuffle_time=args.get("shuffle_time", True),
-                    rng_seed=args.get("seeded_batch_seed", 42) + epoch_num,
-                ),
-                **loader_kwargs,
-            )
+                train_seed_list = epoch_plan.seed_list
+                traffic_dataset.set_seed_list(train_seed_list)
+                realized_ratios = _format_bucket_ratios(epoch_plan.realized_bucket_counts)
+                logger.info(
+                    "Epoch %s seed-time plan: batches=%s samples=%s seed_cycles=%s requested_bucket_counts=%s realized_bucket_counts=%s realized_bucket_ratios=%s",
+                    epoch_num,
+                    epoch_plan.num_batches,
+                    epoch_plan.num_samples,
+                    args["seed_time_epoch_cycles"],
+                    epoch_plan.requested_bucket_counts,
+                    epoch_plan.realized_bucket_counts,
+                    realized_ratios,
+                )
+                train_loader = DataLoader(
+                    train_dataset,
+                    batch_sampler=PlannedSeedTimeBatchSampler(
+                        batch_time_indices=epoch_plan.batch_time_indices,
+                        num_time_windows=num_time_windows,
+                    ),
+                    **loader_kwargs,
+                )
+            else:
+                if picker is not None:
+                    picker.start_epoch()
+                train_batches = _num_batches(
+                    len(train_time_indices),
+                    args["batch_size"],
+                    args.get("drop_last", False),
+                )
+                if train_batches == 0:
+                    raise ValueError("No training batches available for the selected time window split.")
+                train_seed_list = _build_seed_list(
+                    picker,
+                    traffic_dataset.node_seed,
+                    train_batches,
+                )
+                traffic_dataset.set_seed_list(train_seed_list)
+                train_loader = DataLoader(
+                    train_dataset,
+                    batch_sampler=SeededBatchSampler(
+                        seed_list=train_seed_list,
+                        time_indices=train_time_indices,
+                        num_time_windows=num_time_windows,
+                        batch_size=args["batch_size"],
+                        drop_last=args.get("drop_last", False),
+                        shuffle_time=args.get("shuffle_time", True),
+                        rng_seed=args.get("seeded_batch_seed", 42) + epoch_num,
+                    ),
+                    **loader_kwargs,
+                )
         else:
             if picker is not None:
                 picker.start_epoch()
@@ -804,7 +1239,7 @@ def train_model(args: dict, paths: dict) -> None:
                 shuffle=True,
                 **loader_kwargs,
             )
-
+        
         epoch_train_steps = len(train_loader)
         if debug_batches is not None:
             epoch_train_steps = min(epoch_train_steps, debug_batches)
@@ -819,12 +1254,15 @@ def train_model(args: dict, paths: dict) -> None:
         metric_window_counts: dict[str, int] = defaultdict(int)
         metric_epoch_sums: dict[str, float] = defaultdict(float)
         metric_epoch_counts: dict[str, int] = defaultdict(int)
+        train_operational_acc = _init_operational_accumulator(len(level_weights))
+        train_probe_level_preds: list[torch.Tensor] = []
+        train_probe_level_targets: list[torch.Tensor] = []
         for batch_idx, batch in enumerate(pbar):
             # Break if debug mode limit reached
             if debug_batches and batch_idx >= debug_batches:
                 logger.info(f"Debug mode: Breaking training after {batch_idx} batches")
                 break
-
+            
             # Move to device
             batch_start = time.perf_counter()
             data_wait = batch_start - prev_batch_end
@@ -886,21 +1324,16 @@ def train_model(args: dict, paths: dict) -> None:
                 _assert_finite("x_dynamic_past", x_dyn_past)
                 _assert_finite("x_dynamic_future", x_dyn_future)
                 _assert_finite("y_target", y_target)
-
+            
             B = x_static.shape[0]
-
+            
             # Forward pass
             optimizer.zero_grad(set_to_none=True)
-            preds = model(
-                edge_index,
-                x_static[0],
-                x_dyn_past.permute(0, 2, 1, 3),
-                x_dyn_future.permute(0, 2, 1, 3),
-            )
+            preds = model(edge_index, x_static[0], x_dyn_past.permute(0, 2, 1, 3), x_dyn_future.permute(0, 2, 1, 3))
             after_forward = time.perf_counter()
             if sanity_checks:
                 _assert_finite("preds", preds)
-
+            
             # Loss
             if y_target.dim() == 4 and y_target.size(-1) >= 1:
                 level_pred = preds[..., 0] if preds.dim() == 4 else preds
@@ -909,11 +1342,24 @@ def train_model(args: dict, paths: dict) -> None:
                     level_pred,
                     level_target,
                     level_weights=level_weights,
+                    level_scale=level_scale,
+                    continuous_loss=args["loss_continuous_type"],
+                    huber_delta=args["loss_huber_delta"],
+                    class_ce_lambda=args["loss_class_ce_lambda"],
+                    class_distance_lambda=args["loss_class_distance_lambda"],
+                    large_error_threshold=args["loss_large_error_threshold"],
+                    large_error_lambda=args["loss_large_error_lambda"],
                     high_level_threshold=args["loss_high_level_threshold"],
                     high_level_lambda=args["loss_high_level_lambda"],
                     piecewise_threshold=args["loss_piecewise_threshold"],
                     piecewise_mae_lambda=args["loss_piecewise_mae_lambda"],
                     directional_lambda=args["loss_directional_lambda"],
+                    shape_lambda=args["loss_shape_lambda"],
+                    shape_min_std=args["loss_shape_min_std"],
+                    shape_eps=args["loss_shape_eps"],
+                    shape_weight_std=args["loss_shape_weight_std"],
+                    shape_weight_range=args["loss_shape_weight_range"],
+                    shape_weight_max=args["loss_shape_weight_max"],
                 )
                 if y_target.size(-1) >= 2 and preds.dim() == 4 and preds.size(-1) >= 2:
                     loss = loss + loss_fn(preds[..., 1], y_target[..., 1])
@@ -922,13 +1368,26 @@ def train_model(args: dict, paths: dict) -> None:
                     preds,
                     y_target,
                     level_weights=level_weights,
+                    level_scale=level_scale,
+                    continuous_loss=args["loss_continuous_type"],
+                    huber_delta=args["loss_huber_delta"],
+                    class_ce_lambda=args["loss_class_ce_lambda"],
+                    class_distance_lambda=args["loss_class_distance_lambda"],
+                    large_error_threshold=args["loss_large_error_threshold"],
+                    large_error_lambda=args["loss_large_error_lambda"],
                     high_level_threshold=args["loss_high_level_threshold"],
                     high_level_lambda=args["loss_high_level_lambda"],
                     piecewise_threshold=args["loss_piecewise_threshold"],
                     piecewise_mae_lambda=args["loss_piecewise_mae_lambda"],
                     directional_lambda=args["loss_directional_lambda"],
+                    shape_lambda=args["loss_shape_lambda"],
+                    shape_min_std=args["loss_shape_min_std"],
+                    shape_eps=args["loss_shape_eps"],
+                    shape_weight_std=args["loss_shape_weight_std"],
+                    shape_weight_range=args["loss_shape_weight_range"],
+                    shape_weight_max=args["loss_shape_weight_max"],
                 )
-
+            
             after_loss = time.perf_counter()
             # Backward
             loss.backward()
@@ -937,10 +1396,10 @@ def train_model(args: dict, paths: dict) -> None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
             optimizer.step()
             after_step = time.perf_counter()
-
+            
             train_loss += loss.item() * B
             train_samples += B
-
+            
             pbar.set_postfix({"loss": f"{train_loss / max(train_samples, 1):.6f}"})
 
             step_num = epoch * epoch_train_steps + batch_idx + 1
@@ -974,6 +1433,18 @@ def train_model(args: dict, paths: dict) -> None:
             split_losses = _maybe_split_losses(preds, y_target, loss_fn)
             metrics = {"train_loss": float(loss)}
             metrics.update(split_losses)
+            try:
+                level_pred_metrics, level_target_metrics = _extract_level_tensors(preds, y_target)
+                _update_operational_accumulator(
+                    train_operational_acc,
+                    level_pred_metrics,
+                    level_target_metrics,
+                    level_scale=level_scale,
+                )
+                train_probe_level_preds.append(level_pred_metrics.detach().cpu())
+                train_probe_level_targets.append(level_target_metrics.detach().cpu())
+            except ValueError:
+                pass
             _log_metrics("train", metrics, epoch_num, step_num)
             for key, value in metrics.items():
                 metric_window_sums[key] += value
@@ -1007,9 +1478,7 @@ def train_model(args: dict, paths: dict) -> None:
                         key: timing_window_sums[key] / timing_window_count
                         for key in timing_window_sums
                     }
-                    _log_metrics(
-                        "timing_window", timing_window_avgs, epoch_num, step_num
-                    )
+                    _log_metrics("timing_window", timing_window_avgs, epoch_num, step_num)
                     timing_window_sums = defaultdict(float)
                     timing_window_count = 0
 
@@ -1019,53 +1488,71 @@ def train_model(args: dict, paths: dict) -> None:
                         if metric_window_counts[key]
                     }
                     if metric_window_avgs:
-                        _log_metrics(
-                            "train_window", metric_window_avgs, epoch_num, step_num
+                        _log_metrics("train_window", metric_window_avgs, epoch_num, step_num)
+                    if train_probe_level_preds and train_probe_level_targets:
+                        train_probe_metrics = _compute_operational_metrics(
+                            torch.cat(train_probe_level_preds, dim=0),
+                            torch.cat(train_probe_level_targets, dim=0),
+                            prefix="train_probe",
+                            num_levels=len(level_weights),
+                            level_scale=level_scale,
                         )
+                        _log_metrics("train_probe", train_probe_metrics, epoch_num, step_num)
                     metric_window_sums = defaultdict(float)
                     metric_window_counts = defaultdict(int)
-
+                    train_probe_level_preds = []
+                    train_probe_level_targets = []
+            
             # Rotate seed if picker available
             if picker is not None and not use_seeded_batches:
                 next_seed = picker.pick()
                 traffic_dataset.reasign_seed(str(next_seed))
-
+        
         avg_train_loss = train_loss / max(train_samples, 1)
         logger.info(f"Train Loss: {avg_train_loss:.6f}")
-        _log_metrics(
-            "train_epoch", {"train_loss": avg_train_loss}, epoch_num, epoch_train_steps
-        )
+        _log_metrics("train_epoch", {"train_loss": avg_train_loss}, epoch_num, epoch_train_steps)
         metric_epoch_avgs = {
             key: metric_epoch_sums[key] / metric_epoch_counts[key]
             for key in metric_epoch_sums
             if metric_epoch_counts[key]
         }
+        train_operational_metrics = _finalize_operational_accumulator(
+            train_operational_acc,
+            prefix="train",
+        )
         if metric_epoch_avgs:
-            _log_metrics(
-                "train_epoch_avg", metric_epoch_avgs, epoch_num, epoch_train_steps
+            _log_metrics("train_epoch_avg", metric_epoch_avgs, epoch_num, epoch_train_steps)
+        if train_operational_metrics:
+            logger.info(
+                "Train operational metrics: mae_level=%.6f accuracy_exact=%.6f accuracy_pm1=%.6f class_distance_mean=%.6f ge2_rate=%.6f",
+                train_operational_metrics.get("train_mae_level", float("nan")),
+                train_operational_metrics.get("train_accuracy_exact", float("nan")),
+                train_operational_metrics.get("train_accuracy_pm1", float("nan")),
+                train_operational_metrics.get("train_class_distance_mean", float("nan")),
+                train_operational_metrics.get("train_class_distance_ge2_rate", float("nan")),
             )
+            _log_metrics("train_operational_epoch", train_operational_metrics, epoch_num, epoch_train_steps)
         if timing_epoch_count:
             timing_epoch_avgs = {
                 key: timing_epoch_sums[key] / timing_epoch_count
                 for key in timing_epoch_sums
             }
-            _log_metrics(
-                "timing_epoch", timing_epoch_avgs, epoch_num, epoch_train_steps
-            )
-
+            _log_metrics("timing_epoch", timing_epoch_avgs, epoch_num, epoch_train_steps)
+        
         # Validation
         model.eval()
         val_loss = 0.0
         val_samples = 0
-
+        val_operational_acc = _init_operational_accumulator(len(level_weights))
+        
         with torch.no_grad():
             if use_seeded_batches:
                 val_batches = _num_batches(
-                    len(val_time_indices),  # type: ignore
+                    len(val_time_indices),
                     args["batch_size"],
                     args.get("drop_last", False),
                 )
-                val_seed_list = _ensure_seed_list_length(train_seed_list, val_batches)  # type: ignore
+                val_seed_list = _ensure_seed_list_length(train_seed_list, val_batches)
                 traffic_dataset.set_seed_list(
                     val_seed_list or [traffic_dataset.node_seed]
                 )
@@ -1073,7 +1560,7 @@ def train_model(args: dict, paths: dict) -> None:
                     val_dataset,
                     batch_sampler=SeededBatchSampler(
                         seed_list=val_seed_list or [traffic_dataset.node_seed],
-                        time_indices=val_time_indices,  # type: ignore
+                        time_indices=val_time_indices,
                         num_time_windows=num_time_windows,
                         batch_size=args["batch_size"],
                         drop_last=args.get("drop_last", False),
@@ -1098,11 +1585,9 @@ def train_model(args: dict, paths: dict) -> None:
             for val_idx, batch in enumerate(pbar):
                 # Break if debug mode limit reached
                 if debug_batches and val_idx >= debug_batches:
-                    logger.info(
-                        f"Debug mode: Breaking validation after {val_idx} batches"
-                    )
+                    logger.info(f"Debug mode: Breaking validation after {val_idx} batches")
                     break
-
+                
                 x_static = batch["x_static"].to(device)
                 x_dyn_past = batch["x_dynamic_past"].to(device)
                 x_dyn_future = batch["x_dynamic_future"].to(device)
@@ -1127,15 +1612,10 @@ def train_model(args: dict, paths: dict) -> None:
                     _assert_finite("val_x_dynamic_past", x_dyn_past)
                     _assert_finite("val_x_dynamic_future", x_dyn_future)
                     _assert_finite("val_y_target", y_target)
-
+                
                 B = x_static.shape[0]
-
-                preds = model(
-                    edge_index,
-                    x_static[0],
-                    x_dyn_past.permute(0, 2, 1, 3),
-                    x_dyn_future.permute(0, 2, 1, 3),
-                )
+                
+                preds = model(edge_index, x_static[0], x_dyn_past.permute(0, 2, 1, 3), x_dyn_future.permute(0, 2, 1, 3))
                 if sanity_checks:
                     _assert_finite("val_preds", preds)
                 if y_target.dim() == 4 and y_target.size(-1) >= 1:
@@ -1145,46 +1625,96 @@ def train_model(args: dict, paths: dict) -> None:
                         level_pred,
                         level_target,
                         level_weights=level_weights,
+                        level_scale=level_scale,
+                        continuous_loss=args["loss_continuous_type"],
+                        huber_delta=args["loss_huber_delta"],
+                        class_ce_lambda=args["loss_class_ce_lambda"],
+                        class_distance_lambda=args["loss_class_distance_lambda"],
+                        large_error_threshold=args["loss_large_error_threshold"],
+                        large_error_lambda=args["loss_large_error_lambda"],
                         high_level_threshold=args["loss_high_level_threshold"],
                         high_level_lambda=args["loss_high_level_lambda"],
                         piecewise_threshold=args["loss_piecewise_threshold"],
                         piecewise_mae_lambda=args["loss_piecewise_mae_lambda"],
                         directional_lambda=args["loss_directional_lambda"],
+                        shape_lambda=args["loss_shape_lambda"],
+                        shape_min_std=args["loss_shape_min_std"],
+                        shape_eps=args["loss_shape_eps"],
+                        shape_weight_std=args["loss_shape_weight_std"],
+                        shape_weight_range=args["loss_shape_weight_range"],
+                        shape_weight_max=args["loss_shape_weight_max"],
                     )
-                    if (
-                        y_target.size(-1) >= 2
-                        and preds.dim() == 4
-                        and preds.size(-1) >= 2
-                    ):
+                    if y_target.size(-1) >= 2 and preds.dim() == 4 and preds.size(-1) >= 2:
                         loss = loss + loss_fn(preds[..., 1], y_target[..., 1])
                 else:
                     loss = masked_mse(
                         preds,
                         y_target,
                         level_weights=level_weights,
+                        level_scale=level_scale,
+                        continuous_loss=args["loss_continuous_type"],
+                        huber_delta=args["loss_huber_delta"],
+                        class_ce_lambda=args["loss_class_ce_lambda"],
+                        class_distance_lambda=args["loss_class_distance_lambda"],
+                        large_error_threshold=args["loss_large_error_threshold"],
+                        large_error_lambda=args["loss_large_error_lambda"],
                         high_level_threshold=args["loss_high_level_threshold"],
                         high_level_lambda=args["loss_high_level_lambda"],
                         piecewise_threshold=args["loss_piecewise_threshold"],
                         piecewise_mae_lambda=args["loss_piecewise_mae_lambda"],
                         directional_lambda=args["loss_directional_lambda"],
+                        shape_lambda=args["loss_shape_lambda"],
+                        shape_min_std=args["loss_shape_min_std"],
+                        shape_eps=args["loss_shape_eps"],
+                        shape_weight_std=args["loss_shape_weight_std"],
+                        shape_weight_range=args["loss_shape_weight_range"],
+                        shape_weight_max=args["loss_shape_weight_max"],
                     )
-
+                
                 val_loss += loss.item() * B
                 val_samples += B
                 pbar.set_postfix({"val_loss": f"{val_loss / max(val_samples, 1):.6f}"})
+
+                try:
+                    level_pred, level_target = _extract_level_tensors(preds, y_target)
+                    _update_operational_accumulator(
+                        val_operational_acc,
+                        level_pred,
+                        level_target,
+                        level_scale=level_scale,
+                    )
+                except ValueError:
+                    pass
 
                 step_num = epoch * epoch_val_steps + val_idx + 1
                 split_losses = _maybe_split_losses(preds, y_target, loss_fn)
                 metrics = {"val_loss": float(loss)}
                 metrics.update({f"val_{k}": v for k, v in split_losses.items()})
                 _log_metrics("val", metrics, epoch_num, step_num)
-
+        
         avg_val_loss = val_loss / max(val_samples, 1)
         logger.info(f"Val Loss: {avg_val_loss:.6f}")
-        _log_metrics(
-            "val_epoch", {"val_loss": avg_val_loss}, epoch_num, epoch_val_steps
+        _log_metrics("val_epoch", {"val_loss": avg_val_loss}, epoch_num, epoch_val_steps)
+        val_operational_metrics = _finalize_operational_accumulator(
+            val_operational_acc,
+            prefix="val",
         )
-
+        if val_operational_metrics:
+            logger.info(
+                "Val operational metrics: mae_level=%.6f accuracy_exact=%.6f accuracy_pm1=%.6f class_distance_mean=%.6f ge2_rate=%.6f",
+                val_operational_metrics.get("val_mae_level", float("nan")),
+                val_operational_metrics.get("val_accuracy_exact", float("nan")),
+                val_operational_metrics.get("val_accuracy_pm1", float("nan")),
+                val_operational_metrics.get("val_class_distance_mean", float("nan")),
+                val_operational_metrics.get("val_class_distance_ge2_rate", float("nan")),
+            )
+            _log_metrics(
+                "val_operational_epoch",
+                val_operational_metrics,
+                epoch_num,
+                epoch_val_steps,
+            )
+        
         model_config = {
             "static_dim": traffic_dataset.num_static_features,
             "dynamic_dim": dynamic_dim,
@@ -1206,32 +1736,34 @@ def train_model(args: dict, paths: dict) -> None:
             checkpoint_path = Path(CHECKPOINT_DIR) / f"best_model.pth"
             torch.save(checkpoint_payload, checkpoint_path)
             logger.info(f"✓ New best model saved to {checkpoint_path}")
-
+        
         # Save periodic checkpoint
         if (epoch + 1) % 5 == 0:
-            checkpoint_path = Path(CHECKPOINT_DIR) / f"checkpoint_epoch_{epoch + 1}.pth"
+            checkpoint_path = Path(CHECKPOINT_DIR) / f"checkpoint_epoch_{epoch+1}.pth"
             torch.save(checkpoint_payload, checkpoint_path)
             logger.info(f"✓ Checkpoint saved to {checkpoint_path}")
-
+        
         epoch_time = time.time() - epoch_start
         metrics_history["epoch"].append(epoch + 1)
         metrics_history["train_loss"].append(avg_train_loss)
         metrics_history["val_loss"].append(avg_val_loss)
         metrics_history["train_time"].append(epoch_time)
-
+        metrics_history["train_operational"].append(train_operational_metrics)
+        metrics_history["val_operational"].append(val_operational_metrics)
+        
         logger.info(f"Epoch time: {epoch_time:.1f}s")
-
+    
     # ============ 7. Save Final Model ============
     logger.info("\nTraining completed!")
-
+    
     # Save final model to SM_MODEL_DIR
     model_dir = Path(MODEL_DIR)
     model_dir.mkdir(parents=True, exist_ok=True)
-
+    
     final_model_path = model_dir / "model.pth"
     torch.save(checkpoint_payload, final_model_path)
     logger.info(f"✓ Final model saved to {final_model_path}")
-
+    
     # Save model config (separate for convenience)
     config_path = model_dir / "model_config.pkl"
     with open(config_path, "wb") as f:
@@ -1243,14 +1775,27 @@ def train_model(args: dict, paths: dict) -> None:
         pickle.dump(args, f)
     logger.info(f"✓ Training args saved to {training_args_path}")
 
+    temporal_feature_order = getattr(traffic_dataset, "temporal_feature_names", None)
+    dynamic_base_dim = getattr(traffic_dataset, "num_dynamic_features", None)
+    temporal_dim = getattr(traffic_dataset, "num_temporal_features", 0) or 0
+    future_base_dim = getattr(traffic_dataset, "num_dynamic_future_features", None)
+    weather_dim = getattr(traffic_dataset, "num_weather_features", 0) or 0
+    dynamic_total_dim = (
+        (dynamic_base_dim or 0)
+        + temporal_dim
+        + (weather_dim if getattr(traffic_dataset, "include_weather", False) else 0)
+    )
+    future_total_dim = (future_base_dim or 0) + temporal_dim
+
     data_meta = {
         "paths": {k: (str(v) if v is not None else None) for k, v in paths.items()},
         "num_nodes": getattr(traffic_dataset, "num_nodes", None),
         "num_static_features": getattr(traffic_dataset, "num_static_features", None),
-        "num_dynamic_features": getattr(traffic_dataset, "num_dynamic_features", None),
-        "num_dynamic_future_features": getattr(
-            traffic_dataset, "num_dynamic_future_features", None
-        ),
+        "num_dynamic_features": dynamic_base_dim,
+        "num_temporal_features": temporal_dim,
+        "num_dynamic_future_features": future_base_dim,
+        "dynamic_total_dim": dynamic_total_dim,
+        "future_total_dim": future_total_dim,
         "num_target_features": getattr(traffic_dataset, "num_target_features", None),
         "target_feature_idx_map": getattr(
             traffic_dataset, "target_feature_idx_map", None
@@ -1259,40 +1804,151 @@ def train_model(args: dict, paths: dict) -> None:
         "target_velocity_idx": getattr(traffic_dataset, "target_velocity_idx", None),
         "dynamic_feature_dims": getattr(traffic_dataset, "dynamic_feature_dims", None),
         "future_features": getattr(traffic_dataset, "future_features", None),
+        "temporal_feature_names": temporal_feature_order,
         "include_weather": getattr(traffic_dataset, "include_weather", None),
         "weather_features": getattr(traffic_dataset, "weather_features", None),
-        "num_weather_features": getattr(traffic_dataset, "num_weather_features", None),
+        "num_weather_features": weather_dim,
     }
+
+    # Build ordered feature lists from metadata for reproducible inference alignment.
+    dynamic_feature_order_by_file: dict[str, list[str]] = {}
+    dynamic_feature_order_flat: list[str] = []
+    for data_path, meta_path in zip(paths["dynamic"], paths["metadata"]):
+        try:
+            with open(meta_path, "rb") as f:
+                meta = pickle.load(f)
+            feature_idx_map = meta.get("feature_idx_map", {})
+            ordered = [
+                name for name, _ in sorted(feature_idx_map.items(), key=lambda kv: kv[1])
+            ]
+        except Exception as exc:
+            logger.warning(
+                "Failed to read feature order from %s: %s", meta_path, exc
+            )
+            ordered = []
+        dynamic_feature_order_by_file[Path(data_path).name] = ordered
+        dynamic_feature_order_flat.extend(ordered)
+
+    future_feature_order = getattr(traffic_dataset, "future_features", None)
+    future_feature_order_by_file = None
+    future_features_idxs = getattr(traffic_dataset, "future_features_idxs", None)
+    if future_features_idxs and isinstance(future_features_idxs, dict):
+        future_feature_order_by_file = {}
+        for data_path, meta_path in zip(paths["dynamic"], paths["metadata"]):
+            if str(data_path) not in future_features_idxs:
+                continue
+            try:
+                with open(meta_path, "rb") as f:
+                    meta = pickle.load(f)
+                feature_idx_map = meta.get("feature_idx_map", {})
+                idx_to_name = {idx: name for name, idx in feature_idx_map.items()}
+                ordered = [
+                    idx_to_name.get(idx)
+                    for idx in future_features_idxs[str(data_path)]
+                ]
+                ordered = [name for name in ordered if name is not None]
+            except Exception as exc:
+                logger.warning(
+                    "Failed to read future feature order from %s: %s", meta_path, exc
+                )
+                ordered = []
+            future_feature_order_by_file[Path(data_path).name] = ordered
+
+    model_input_contract = {
+        "contract_version": 2,
+        "temporal_features_appended": True,
+        "temporal_feature_source": "derived_from_timestamp_in_loader",
+        "temporal_feature_names": temporal_feature_order,
+        "timezone_used": "America/Bogota",
+        "holiday_calendar": "CO",
+        "static_dim": getattr(traffic_dataset, "num_static_features", None),
+        "dynamic_base_dim": dynamic_base_dim,
+        "dynamic_total_dim": dynamic_total_dim,
+        "future_base_dim": future_base_dim,
+        "future_total_dim": future_total_dim,
+        "weather_dim": weather_dim if getattr(traffic_dataset, "include_weather", False) else 0,
+        "include_weather": getattr(traffic_dataset, "include_weather", None),
+        "dynamic_past_order": dynamic_feature_order_flat + (temporal_feature_order or []),
+        "dynamic_future_order": (future_feature_order or []) + (temporal_feature_order or []),
+        "dynamic_feature_order_by_file": dynamic_feature_order_by_file,
+        "future_feature_order_by_file": future_feature_order_by_file,
+    }
+
+    data_meta.update(
+        {
+            "dynamic_feature_order_by_file": dynamic_feature_order_by_file,
+            "dynamic_feature_order_flat": dynamic_feature_order_flat,
+            "dynamic_feature_order_with_temporal": dynamic_feature_order_flat
+            + (temporal_feature_order or []),
+            "future_feature_order": future_feature_order,
+            "future_feature_order_with_temporal": (future_feature_order or [])
+            + (temporal_feature_order or []),
+            "future_feature_order_by_file": future_feature_order_by_file,
+            "temporal_feature_order": temporal_feature_order,
+            "model_input_contract": model_input_contract,
+        }
+    )
     data_meta_path = model_dir / "data_meta.pkl"
     with open(data_meta_path, "wb") as f:
         pickle.dump(data_meta, f)
     logger.info(f"✓ Data metadata saved to {data_meta_path}")
 
+    feature_order_path = model_dir / "feature_order.json"
+    with open(feature_order_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "contract_version": 2,
+                "dynamic_feature_order_by_file": dynamic_feature_order_by_file,
+                "dynamic_feature_order_flat": dynamic_feature_order_flat,
+                "dynamic_feature_order_with_temporal": dynamic_feature_order_flat
+                + (temporal_feature_order or []),
+                "future_feature_order": future_feature_order,
+                "future_feature_order_with_temporal": (future_feature_order or [])
+                + (temporal_feature_order or []),
+                "future_feature_order_by_file": future_feature_order_by_file,
+                "temporal_feature_order": temporal_feature_order,
+                "dynamic_base_dim": dynamic_base_dim,
+                "dynamic_total_dim": dynamic_total_dim,
+                "future_base_dim": future_base_dim,
+                "future_total_dim": future_total_dim,
+                "weather_dim": weather_dim if getattr(traffic_dataset, "include_weather", False) else 0,
+                "temporal_features_appended": True,
+                "temporal_feature_source": "derived_from_timestamp_in_loader",
+                "timezone_used": "America/Bogota",
+                "holiday_calendar": "CO",
+                "model_input_contract": model_input_contract,
+            },
+            f,
+            indent=2,
+            sort_keys=True,
+        )
+    logger.info(f"✓ Feature order saved to {feature_order_path}")
+    
     # Save metrics
     metrics_path = model_dir / "metrics.pkl"
     with open(metrics_path, "wb") as f:
         pickle.dump(metrics_history, f)
     logger.info(f"✓ Metrics saved to {metrics_path}")
-
-    logger.info(f"\n{'=' * 80}")
+    
+    logger.info(f"\n{'='*80}")
     logger.info(f"TRAINING SUMMARY")
-    logger.info(f"{'=' * 80}")
+    logger.info(f"{'='*80}")
     logger.info(f"Best validation loss: {best_val_loss:.6f}")
     logger.info(f"Final training loss: {metrics_history['train_loss'][-1]:.6f}")
     logger.info(f"Total training time: {sum(metrics_history['train_time']):.1f}s")
     logger.info(f"Model saved to: {final_model_path}")
-    logger.info(f"{'=' * 80}\n")
+    logger.info(f"{'='*80}\n")
 
 
 if __name__ == "__main__":
     try:
-        logger.info(f"\n{'=' * 80}")
+        logger.info(f"\n{'='*80}")
         logger.info(f"SageMaker Training Job Started at {datetime.now()}")
-        logger.info(f"{'=' * 80}\n")
-
+        logger.info(f"{'='*80}\n")
+        
         # Parse arguments
         args = parse_args()
-
+        
         # Check data channels
         train_path = check_data_channels()
 
@@ -1312,14 +1968,14 @@ if __name__ == "__main__":
             include_weather=args["include_weather"],
             use_minimal_datasets=args["use_minimal_datasets"],
         )
-
+        
         # Train model
         train_model(args, paths)
-
-        logger.info(f"\n{'=' * 80}")
+        
+        logger.info(f"\n{'='*80}")
         logger.info(f"SageMaker Training Job Completed Successfully")
-        logger.info(f"{'=' * 80}\n")
-
+        logger.info(f"{'='*80}\n")
+        
     except Exception as e:
         logger.error(f"\nTraining failed with error: {str(e)}", exc_info=True)
         sys.exit(1)

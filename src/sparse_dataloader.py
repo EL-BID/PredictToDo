@@ -2,6 +2,7 @@ import math
 import pickle
 
 import h5py
+import holidays
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -217,9 +218,35 @@ class TrafficDataset(Dataset):
         self.dynamic_data_indices, self.target_data_indices = (
             self._precompute_time_indices()
         )
+        self.temporal_feature_names = [
+            "hour_sin",
+            "hour_cos",
+            "dow_sin",
+            "dow_cos",
+            "is_weekend",
+            "is_holiday",
+        ]
+        self.num_temporal_features = len(self.temporal_feature_names)
         self.future_features_idxs = self._get_future_dynamic_feature_idxs(
             metadata_paths
         )
+        self.idx_to_timestamp = self._load_time_index_map(target_metadata_path)
+        self.min_mapped_time_idx = min(self.idx_to_timestamp)
+        self.max_mapped_time_idx = max(self.idx_to_timestamp)
+        self.effective_total_timesteps = min(
+            self.total_timesteps_in_data,
+            self.max_mapped_time_idx + 1,
+        )
+        if len(self.idx_to_timestamp) > 1:
+            sorted_idx = sorted(self.idx_to_timestamp)
+            sorted_ts = [self.idx_to_timestamp[idx] for idx in sorted_idx]
+            deltas = pd.Series(sorted_ts).diff().dropna()
+            self.time_index_frequency = deltas.mode().iloc[0] if not deltas.empty else pd.Timedelta(minutes=15)
+            self.base_timestamp = self.idx_to_timestamp[sorted_idx[0]]
+        else:
+            self.time_index_frequency = pd.Timedelta(minutes=15)
+            self.base_timestamp = next(iter(self.idx_to_timestamp.values()))
+        self.holiday_calendar = holidays.country_holidays("CO")
 
         # Load normalization constants if provided
         self.norm_constants: dict[str, dict[str, float]] | None = None
@@ -344,6 +371,11 @@ class TrafficDataset(Dataset):
                 reachable.append(v)
                 if len(reachable) >= self.node_batch_size:
                     break
+
+            # Keep batch shapes stable even for sparsely connected seeds.
+            # The inference service already pads this way; training must match.
+            if len(reachable) < self.node_batch_size:
+                reachable.extend([start_node] * (self.node_batch_size - len(reachable)))
             all_reachable_nodes[start_node] = reachable
 
         return all_reachable_nodes
@@ -467,6 +499,73 @@ class TrafficDataset(Dataset):
 
         return weather_stations, weather_data
 
+    def _load_time_index_map(self, target_metadata_path: str) -> dict[int, pd.Timestamp]:
+        """Load canonical timestamps from target metadata."""
+        with open(target_metadata_path, "rb") as f:
+            target_metadata = pickle.load(f)
+
+        time_idx_map = target_metadata.get("time_idx_map")
+        if not isinstance(time_idx_map, dict) or not time_idx_map:
+            raise ValueError(
+                "Target metadata must contain a non-empty 'time_idx_map' to build temporal features."
+            )
+
+        return {
+            int(idx): pd.Timestamp(timestamp) for timestamp, idx in time_idx_map.items()
+        }
+
+    def _build_temporal_features(
+        self,
+        start_time_idx: int,
+        num_timesteps: int,
+    ) -> torch.Tensor:
+        """
+        Build deterministic temporal covariates from the timestamp index.
+
+        Features:
+        - hour_sin, hour_cos
+        - day-of-week_sin, day-of-week_cos
+        - is_weekend
+        - is_holiday (Colombia)
+        """
+        timestamps = [
+            self._resolve_timestamp(start_time_idx + offset)
+            for offset in range(num_timesteps)
+        ]
+        ts = pd.DatetimeIndex(timestamps)
+
+        hour_float = ts.hour + ts.minute / 60.0
+        hour_angle = 2.0 * np.pi * hour_float / 24.0
+        dow_angle = 2.0 * np.pi * ts.dayofweek / 7.0
+
+        features = np.stack(
+            [
+                np.sin(hour_angle),
+                np.cos(hour_angle),
+                np.sin(dow_angle),
+                np.cos(dow_angle),
+                (ts.dayofweek >= 5).astype(np.float32),
+                np.array(
+                    [1.0 if timestamp.date() in self.holiday_calendar else 0.0 for timestamp in ts],
+                    dtype=np.float32,
+                ),
+            ],
+            axis=1,
+        )
+        return torch.from_numpy(features).float()
+
+    def _resolve_timestamp(self, time_idx: int) -> pd.Timestamp:
+        """Resolve a timestamp for a given time index, tolerating small metadata gaps."""
+        if time_idx in self.idx_to_timestamp:
+            return self.idx_to_timestamp[time_idx]
+
+        if time_idx < self.min_mapped_time_idx:
+            offset = time_idx - self.min_mapped_time_idx
+            return self.idx_to_timestamp[self.min_mapped_time_idx] + offset * self.time_index_frequency
+
+        offset = time_idx - self.min_mapped_time_idx
+        return self.base_timestamp + offset * self.time_index_frequency
+
     def _identify_imputation_features(self, metadata_paths: list[str]) -> None:
         """
         Identify which HDF5 files and feature indices correspond to the imputation features.
@@ -541,10 +640,10 @@ class TrafficDataset(Dataset):
         Returns:
             int: Number of time windows for the current seed node's neighborhood.
         """
-        if self.total_timesteps_in_data < self.total_timesteps_window:
+        if self.effective_total_timesteps < self.total_timesteps_window:
             return 0
         num_time_windows = (
-            self.total_timesteps_in_data - self.total_timesteps_window + 1
+            self.effective_total_timesteps - self.total_timesteps_window + 1
         )
         if self.seed_list is not None:
             return num_time_windows * len(self.seed_list)
@@ -570,7 +669,7 @@ class TrafficDataset(Dataset):
         node indices.
         """
         num_time_windows = (
-            self.total_timesteps_in_data - self.total_timesteps_window + 1
+            self.effective_total_timesteps - self.total_timesteps_window + 1
         )
         if self.seed_list is not None:
             seed_idx = idx // num_time_windows
@@ -1031,6 +1130,12 @@ class TrafficDataset(Dataset):
         x_dynamic_future = torch.zeros(
             (batch_size, self.out_timesteps, self.num_dynamic_future_features)
         )
+        x_temporal_past = self._build_temporal_features(
+            input_start_time, self.in_timesteps
+        ).unsqueeze(0).repeat(batch_size, 1, 1)
+        x_temporal_future = self._build_temporal_features(
+            target_start_time, self.out_timesteps
+        ).unsqueeze(0).repeat(batch_size, 1, 1)
 
         # Weather features tensor (for both past and future since weather is always available)
         x_weather = (
@@ -1194,6 +1299,11 @@ class TrafficDataset(Dataset):
                 )
             )
 
+        # Append temporal covariates after normalization. These features are
+        # already bounded (sin/cos in [-1, 1], binary flags in {0, 1}).
+        x_dynamic_past = torch.cat([x_dynamic_past, x_temporal_past], dim=2)
+        x_dynamic_future = torch.cat([x_dynamic_future, x_temporal_future], dim=2)
+
         # Use torch_geometric's subgraph utility to get the edges for the
         # node subset and automatically relabel the node indices from 0
         edge_index_sub, _ = subgraph(
@@ -1208,6 +1318,8 @@ class TrafficDataset(Dataset):
             "x_static": x_static_normalized,
             "x_dynamic_past": x_dynamic_past,
             "x_dynamic_future": x_dynamic_future,
+            "x_temporal_past": x_temporal_past,
+            "x_temporal_future": x_temporal_future,
             "y": y,
             "edge_index": edge_index_sub,
             "num_nodes": self.num_nodes,

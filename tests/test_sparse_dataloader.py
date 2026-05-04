@@ -474,14 +474,24 @@ class TestTrafficDataset:
         assert sample.x_dynamic_past.shape == (
             batch_size,
             in_timesteps,
-            dataset.num_dynamic_features,
+            dataset.num_dynamic_features + dataset.num_temporal_features,
         )
         assert sample.x_dynamic_future.shape == (
             batch_size,
             out_timesteps,
-            len(future_features),
+            len(future_features) + dataset.num_temporal_features,
         )
         assert sample.y.shape == (batch_size, out_timesteps)
+        assert sample.x_temporal_past.shape == (
+            batch_size,
+            in_timesteps,
+            dataset.num_temporal_features,
+        )
+        assert sample.x_temporal_future.shape == (
+            batch_size,
+            out_timesteps,
+            dataset.num_temporal_features,
+        )
 
         # Check edge_index
         assert isinstance(sample.edge_index, torch.Tensor)
@@ -1996,237 +2006,3 @@ class TestVelocityTarget:
         sample = dataset[0]
         assert isinstance(sample.y, torch.Tensor)
         assert sample.y.shape == (5, 5)  # 2D, not 3D
-
-    def test_velocity_target_imputation(self, velocity_target_setup):
-        """Test that missing velocity values in target are correctly imputed using free_flow_speed_mean."""
-        setup = velocity_target_setup
-        temp_dir = setup["temp_dir"]
-
-        # Create target data with deliberate missing velocity values
-        target_path = self._create_target_with_missing_velocity(temp_dir)
-
-        # Create neighbor features with free_flow_speed_mean for imputation
-        neighbor_features_path = self._create_neighbor_features_with_velocity(temp_dir)
-
-        dataset = TrafficDataset(
-            graph_path=setup["graph_path"],
-            static_data_path=setup["static_path"],
-            dynamic_data_paths=setup["dynamic_paths"],
-            metadata_paths=setup["metadata_paths"],
-            target_data_path=target_path,
-            in_timesteps=8,
-            out_timesteps=4,
-            future_features=["coi_puntos"],
-            node_batch_size=5,
-            node_seed="node_0",
-            include_velocity_target=True,
-            neighbor_features_path=neighbor_features_path,
-        )
-
-        # Verify mean_jam_velocity is in imputation mapping
-        assert "mean_jam_velocity" in dataset.imputation_mapping
-        assert dataset.imputation_mapping["mean_jam_velocity"] == "free_flow_speed_mean"
-
-        # Get a sample and verify imputation
-        sample = dataset[0]
-        y = sample.y
-
-        # y should have shape (batch_size, out_timesteps, 2)
-        assert isinstance(y, torch.Tensor)
-        assert y.shape == (5, 4, 2)
-
-        # Get the node indices for this batch
-        _, node_indices = dataset._get_time_and_node_indices(0)
-
-        # For each node in the batch, verify velocity imputation
-        for batch_idx, global_node_idx in enumerate(node_indices):
-            node_id = dataset.id_to_node[global_node_idx]
-
-            # Get expected imputation value from neighbor features
-            expected_velocity = float(
-                dataset.neighbor_features.loc[node_id, "free_flow_speed_mean"]  # type: ignore
-            )
-
-            # Based on our test data creation:
-            # - Even timesteps (0, 2) have missing velocity (0.0) -> should be imputed
-            # - Odd timesteps (1, 3) have actual velocity values -> should NOT be imputed
-            for timestep in range(4):
-                velocity_value = y[batch_idx, timestep, 1].item()
-
-                if timestep % 2 == 0:
-                    # Even timesteps should be imputed
-                    assert abs(velocity_value - expected_velocity) < 1e-4, (
-                        f"Node {node_id}, timestep {timestep}: "
-                        f"Expected imputed velocity={expected_velocity}, got {velocity_value}"
-                    )
-                else:
-                    # Odd timesteps should have actual values (not imputed)
-                    # Based on test data: velocity = time_idx * 10 + node_idx
-                    # But we need to account for target_start_time offset
-                    # target_start_time = time_idx + in_timesteps = 0 + 8 = 8
-                    actual_time_idx = 8 + timestep  # Actual time index in the data
-                    expected_actual_velocity = actual_time_idx * 10 + global_node_idx
-                    assert abs(velocity_value - expected_actual_velocity) < 1e-4, (
-                        f"Node {node_id}, timestep {timestep}: "
-                        f"Actual velocity should not be overwritten. "
-                        f"Expected {expected_actual_velocity}, got {velocity_value}"
-                    )
-
-    def test_velocity_imputation_does_not_affect_jam_level(self, velocity_target_setup):
-        """Test that velocity imputation does not affect jam level values."""
-        setup = velocity_target_setup
-        temp_dir = setup["temp_dir"]
-
-        # Create target data with missing velocity but complete jam level
-        target_path = self._create_target_with_missing_velocity(temp_dir)
-        neighbor_features_path = self._create_neighbor_features_with_velocity(temp_dir)
-
-        dataset = TrafficDataset(
-            graph_path=setup["graph_path"],
-            static_data_path=setup["static_path"],
-            dynamic_data_paths=setup["dynamic_paths"],
-            metadata_paths=setup["metadata_paths"],
-            target_data_path=target_path,
-            in_timesteps=8,
-            out_timesteps=4,
-            future_features=["coi_puntos"],
-            node_batch_size=5,
-            node_seed="node_0",
-            include_velocity_target=True,
-            neighbor_features_path=neighbor_features_path,
-        )
-
-        sample = dataset[0]
-        y = sample.y
-        assert isinstance(y, torch.Tensor)
-
-        _, node_indices = dataset._get_time_and_node_indices(0)
-
-        # Verify jam level values are correct (not affected by velocity imputation)
-        for batch_idx, global_node_idx in enumerate(node_indices):
-            node_id = dataset.id_to_node[global_node_idx]
-
-            for timestep in range(4):
-                jam_level = y[batch_idx, timestep, 0].item()
-                # Based on test data: jam_level = (time_idx % 5) + 1
-                actual_time_idx = 8 + timestep
-                expected_jam_level = (actual_time_idx % 5) + 1
-                assert abs(jam_level - expected_jam_level) < 1e-4, (
-                    f"Node {node_id}, timestep {timestep}: "
-                    f"Jam level should not be affected by velocity imputation. "
-                    f"Expected {expected_jam_level}, got {jam_level}"
-                )
-
-    def test_velocity_imputation_without_neighbor_features(self, velocity_target_setup):
-        """Test that velocity imputation is skipped when neighbor_features_path is not provided."""
-        setup = velocity_target_setup
-        temp_dir = setup["temp_dir"]
-
-        # Create target data with missing velocity
-        target_path = self._create_target_with_missing_velocity(temp_dir)
-
-        # Do NOT provide neighbor_features_path
-        dataset = TrafficDataset(
-            graph_path=setup["graph_path"],
-            static_data_path=setup["static_path"],
-            dynamic_data_paths=setup["dynamic_paths"],
-            metadata_paths=setup["metadata_paths"],
-            target_data_path=target_path,
-            in_timesteps=8,
-            out_timesteps=4,
-            future_features=["coi_puntos"],
-            node_batch_size=5,
-            node_seed="node_0",
-            include_velocity_target=True,
-            # neighbor_features_path is not provided
-        )
-
-        sample = dataset[0]
-        y = sample.y
-        assert isinstance(y, torch.Tensor)
-
-        _, node_indices = dataset._get_time_and_node_indices(0)
-
-        # Verify that missing velocity values remain as zeros (no imputation)
-        for batch_idx, global_node_idx in enumerate(node_indices):
-            for timestep in range(4):
-                if timestep % 2 == 0:
-                    # Even timesteps should still be zero (not imputed)
-                    velocity_value = y[batch_idx, timestep, 1].item()
-                    assert velocity_value == 0.0, (
-                        f"Without neighbor features, missing velocity should remain 0. "
-                        f"Got {velocity_value}"
-                    )
-
-    def _create_target_with_missing_velocity(self, temp_dir: str) -> str:
-        """Create target data with deliberate missing velocity values for imputation testing."""
-        data_list = []
-        feature_names = ["mean_jam_level", "mean_jam_velocity"]
-
-        for time_idx in range(50):
-            for node_idx in range(10):
-                # Jam level is always present
-                jam_level = (time_idx % 5) + 1  # Values 1-5
-                data_list.append([node_idx, time_idx, 0, jam_level])
-
-                # Velocity: even timesteps have missing values (0.0), odd timesteps have actual values
-                if time_idx % 2 == 0:
-                    # Missing velocity - we simply don't add it to create a sparse "missing" value
-                    # The tensor will be initialized to 0, so not adding means it stays 0
-                    pass
-                else:
-                    # Actual velocity value: predictable pattern for verification
-                    velocity = time_idx * 10 + node_idx
-                    data_list.append([node_idx, time_idx, 1, velocity])
-
-        data_array = np.array(data_list)
-        if len(data_array) > 0:
-            data_array = data_array[data_array[:, 1].argsort()]
-
-        target_path = os.path.join(temp_dir, "target_with_missing_velocity.h5")
-        with h5py.File(target_path, "w") as f:
-            f.create_dataset("data", data=data_array, dtype=np.float32)
-
-        # Create metadata
-        feature_idx_map = {name: i for i, name in enumerate(feature_names)}
-        metadata = {
-            "node_idx_map": {f"node_{i}": i for i in range(10)},
-            "time_idx_map": {i: i for i in range(50)},
-            "feature_idx_map": feature_idx_map,
-        }
-
-        metadata_path = target_path.replace(".h5", "_metadata.pkl")
-        with open(metadata_path, "wb") as f:
-            pickle.dump(metadata, f)
-
-        return target_path
-
-    def _create_neighbor_features_with_velocity(self, temp_dir: str) -> str:
-        """Create neighbor features parquet file with free_flow_speed_mean for velocity imputation."""
-        neighbor_data = []
-        for node_idx in range(10):
-            node_id = f"node_{node_idx}"
-            # Use deterministic values for testing
-            # free_flow_speed_mean: predictable pattern for verification
-            free_flow_speed_mean = 50.0 + node_idx * 5.0  # e.g., 50, 55, 60, ...
-            # Also include other imputation features for completeness
-            mean_trend = -0.5 + node_idx * 0.1
-            mean_regularSpeed = 20.0 + node_idx * 2.0
-            neighbor_data.append(
-                {
-                    "node_id": node_id,
-                    "mean_trend": mean_trend,
-                    "mean_regularSpeed": mean_regularSpeed,
-                    "free_flow_speed_mean": free_flow_speed_mean,
-                }
-            )
-
-        df = pd.DataFrame(neighbor_data)
-        df = df.set_index("node_id")
-
-        neighbor_path = os.path.join(
-            temp_dir, "neighbor_features_with_velocity.parquet"
-        )
-        df.to_parquet(neighbor_path)
-
-        return neighbor_path

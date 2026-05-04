@@ -1,6 +1,6 @@
 from torch_geometric.data import Data, Dataset
 
-from sparse_dataloader import TrafficDataset
+from src.sparse_dataloader import TrafficDataset
 
 
 class TemporalSubset(Dataset):
@@ -222,9 +222,9 @@ def temporal_train_val_test_split(
 if __name__ == "__main__":
     from torch_geometric.loader import DataLoader
 
-    from sparse_dataloader import TrafficDataset
-    from temporal_split import temporal_train_test_split
-    from training_utils import pad_collate
+    from src.sparse_dataloader import TrafficDataset
+    from src.temporal_split import temporal_train_test_split
+    from src.training_utils import pad_collate
 
     processed_data_dir = "data/datos_procesados"
     sparse_data_dir = f"{processed_data_dir}/sparse_datasets"
@@ -359,7 +359,7 @@ if __name__ == "__main__":
 
     print("\n7. Alternative: Three-way split (70-15-15):")
 
-    from temporal_split import temporal_train_val_test_split
+    from src.temporal_split import temporal_train_val_test_split
 
     train_ds, val_ds, test_ds = temporal_train_val_test_split(
         dataset, train_ratio=0.7, val_ratio=0.15

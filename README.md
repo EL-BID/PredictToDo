@@ -318,9 +318,7 @@ uv run python -m src.inference_production \
   --irregularities data/inference_tests/df_irregularidades_test.parquet \
   --weather data/inference_tests/df_clima_test.parquet \
   --pmt-puntos data/inference_tests/df_pmt_puntos_test.parquet \
-  --pmt-tramos data/inference_tests/df_pmt_tramos_test.parquet \
-  --events data/inference_tests/df_eventos_test.parquet \
-  --incidents data/inference_tests/df_incidentes_test.parquet
+  --pmt-tramos data/inference_tests/df_pmt_tramos_test.parquet
 ```
 
 ### Basic Usage
@@ -347,8 +345,6 @@ batches = loader.load_and_prepare_batch(
     weather_path="data/inference_tests/df_clima_test.parquet",
     pmt_puntos_path="data/inference_tests/df_pmt_puntos_test.parquet",
     pmt_tramos_path="data/inference_tests/df_pmt_tramos_test.parquet",
-    events_path="data/inference_tests/df_eventos_test.parquet",
-    incidents_path="data/inference_tests/df_incidentes_test.parquet",
 )
 
 # Make predictions with your model
@@ -370,8 +366,9 @@ loader.cleanup()
 
 ### Key Features
 
-- **Real-time Processing**: Loads data from parquet files (jams, irregularities, weather, PMTs, events, incidents)
+- **Real-time Processing**: Loads data from parquet files (jams, irregularities, weather, PMTs)
 - **Automatic Alignment**: Aligns real-time data with graph nodes and time windows
+- **Missing Data Handling**: Gracefully handles missing features (events, incidents set to 0)
 - **Normalization**: Applies the same normalization as training
 - **Ray Support**: Optional parallel processing for faster inference
 - **Memory Efficient**: Node batching to control memory usage
@@ -381,12 +378,12 @@ loader.cleanup()
 Each batch contains:
 ```
 - x_static: (num_nodes, 117) - Static road features
-- x_dynamic_past: (num_nodes, 150, num_features) - Historical features
+- x_dynamic_past: (num_nodes, 150, 64) - Historical features
   * Jams: 10 features (velocity, level, delay stats)
   * Irregularities: 42 features (Waze data)
   * PMTs: 4 features (traffic management plans)
-  * Events: 3 features (public events data)
-  * Incidents: 11 features (traffic incidents data)
+  * Events: 3 features (placeholder, set to 0)
+  * Incidents: 5 features (placeholder, set to 0)
 - x_dynamic_future: (num_nodes, 50, 4) - Known future features
   * PMTs only: coi_parques, coi_puntos, coi_tramo, coos_punto
 - x_weather: (num_nodes, 150, 4) - Weather features
@@ -405,8 +402,6 @@ Real-time data must be in parquet format:
 | `df_clima_test.parquet` | `tipo_sensor`, `IDSENSOR`, `VALORLECTURA_mean`, `timestamp_local` | Weather data |
 | `df_pmt_puntos_test.parquet` | `road_id`, `timeframe`, `coi_parques`, `coi_puntos` | Traffic management (points) |
 | `df_pmt_tramos_test.parquet` | `road_id`, `timeframe`, `coi_tramo`, `coos_punto` | Traffic management (tracts) |
-| `df_eventos_test.parquet` | `road_id`, `timeframe`, event features | Public events data |
-| `df_incidentes_test.parquet` | `road_id`, `timeframe`, incident features | Traffic incidents data |
 
 **Important Notes:**
 - `id_mvi` and `road_id` must match graph node IDs
