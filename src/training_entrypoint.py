@@ -1,40 +1,39 @@
-import math
-import os  # noqa: I001
-import sys
-import time
-import logging
 import argparse
+import json
+import logging
+import math
+import os
 import pickle
 import shutil
+import sys
 import tempfile
-from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
-import json
+from pathlib import Path
 
 import boto3
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
 from torch.amp import GradScaler
+from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 # Add project root to path to allow package imports when run as a script.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.models.gnn_temporal import GNN_Temporal_Model
 from src.sparse_dataloader import TrafficDataset
 from src.temporal_split import temporal_train_test_split
+from src.training.loop import train_one_epoch
+from src.training.losses import masked_mse
 from src.training_utils import (
-    pad_collate,
-    build_node_50_picker,
     EpochUniquePicker,
     PlannedSeedTimeBatchSampler,
     SeededBatchSampler,
     SeedTimeEpochPlanner,
+    build_node_50_picker,
+    pad_collate,
 )
-from src.models.gnn_temporal import GNN_Temporal_Model
-from src.training.loop import train_one_epoch
-from src.training.losses import masked_mse
 from src.utils.logging import log
 
 LOG_LEVEL = int(os.getenv("SM_LOG_LEVEL", logging.INFO))

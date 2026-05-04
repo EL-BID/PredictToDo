@@ -12,6 +12,8 @@ It summarizes:
 - active experiments and remaining work
 - current real-time evaluation and inference-traceability findings
 
+Human-facing repository documentation now lives in `docs/`. Use this folder for current operational state, decisions, and AI handoffs; use `README.md` and `docs/` for external readers.
+
 Recommended reading order:
 1. `00-start-here.md`
 2. `01-repository-map.md`

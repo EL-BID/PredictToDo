@@ -10,6 +10,16 @@
   - offline and real-time evaluation against dense `prediction + jams fillna(0)` universes
   - calibration and inference-traceability cleanup
 
+## Human-Facing Docs
+- Root README:
+  - `README.md`
+- Documentation index:
+  - `docs/README.md`
+- Code and operations map:
+  - `docs/repository-structure.md`
+  - `docs/training.md`
+  - `docs/inference-evaluation.md`
+
 ## What Not To Assume
 - Do not assume the current training loop still uses the original seeded sampler only.
 - Do not assume sampling is global by `time_idx` only.
@@ -84,5 +94,7 @@
   - `/data/datos_procesados`
 - Canonical AI handoff layer:
   - `ai-context/`
+- Human-facing documentation layer:
+  - `docs/`
 - Related real-time inference repository:
   - `<inference-repo-root>`

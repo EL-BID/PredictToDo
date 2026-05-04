@@ -68,9 +68,13 @@
   - GPU utilization
   - CPU utilization
 
-### Live runtime validation now in progress
-- Four live SageMaker training jobs are running with the new sampler.
-- This is the most important current validation layer.
+### Local validation
+- Python `3.12.12` environment:
+  - `conda activate congestion-bogota-py312`
+- Current unit test result:
+  - `118 passed`
+- Current lint result:
+  - `ruff check .` passes
 
 ## Recommendation For Future Quality Work
 - Add targeted unit tests for:

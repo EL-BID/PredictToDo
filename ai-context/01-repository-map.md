@@ -4,8 +4,11 @@
 - This repo mixes:
   - core runtime code under `src/`
   - notebooks used for experiments and SageMaker job launching
-  - generated artifacts under `data/artifacts/`
-  - a smaller `docs/` layer with design notes
+  - operational scripts under `scripts/`
+  - tests under `tests/`
+  - human-facing docs under `docs/`
+  - AI handoff notes under `ai-context/`
+  - paper source under `white_paper/`
 
 ## Core Runtime Paths
 
@@ -70,6 +73,8 @@
 - Launches shard-based seed-time artifact generation.
 
 ## Artifact Layer
+
+Large artifacts are not tracked in Git. Local artifact paths may exist under ignored folders such as `data/artifacts/`, while canonical shared artifacts are usually in S3 or EFS.
 
 ### `data/artifacts/seed_time_merged/`
 - Consolidated artifact for the initial `937`-seed universe.

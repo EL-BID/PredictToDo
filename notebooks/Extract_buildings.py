@@ -14,14 +14,15 @@
 # ---
 
 # %%
-import geopandas as gpd
-import osmnx as ox
-from shapely.geometry import Polygon
-import pandas as pd
-import numpy as np
-from tqdm.auto import tqdm
-from collections import Counter
 import os
+from collections import Counter
+
+import geopandas as gpd
+import numpy as np
+import osmnx as ox
+import pandas as pd
+from shapely.geometry import Polygon
+from tqdm.auto import tqdm
 
 # %%
 roads_gdf = gpd.read_file('data/2_Estructura_via/estructura_via_completa/MVI.geojson')
@@ -174,9 +175,6 @@ road_df.shape
 # %%
 import osmnx as ox
 from osmnx import geometries
-
-# %%
-ox.
 
 # %%
 road_df_m = road_df.to_crs(epsg=3116)

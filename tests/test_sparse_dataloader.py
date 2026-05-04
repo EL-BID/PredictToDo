@@ -767,12 +767,22 @@ class TestTrafficDataset:
         # Node batch for node_1 with batch_size=3 includes [node_1, node_0, node_2] (BFS from node_1)
         # Time window [0, 1] for in_timesteps=2
 
-        # Verify specific values are loaded correctly
-        past_features = sample.x_dynamic_past
+        # Verify specific raw dynamic values are loaded correctly. The dataset
+        # appends temporal covariates after raw dynamic features.
+        past_features_full = sample.x_dynamic_past
 
         # Check dimensions
-        # (batch_size=3, timesteps=2, features=2)
-        assert past_features.shape == (3, 2, 2)
+        # (batch_size=3, timesteps=2, raw_features=2 + temporal_features)
+        assert past_features_full.shape == (
+            3,
+            2,
+            2 + dataset.num_temporal_features,
+        )
+        assert torch.equal(
+            past_features_full[:, :, 2:],
+            sample.x_temporal_past,
+        )
+        past_features = past_features_full[:, :, :2]
 
         # Get actual node mapping to understand batch order
         time_idx, node_indices = dataset._get_time_and_node_indices(0)
@@ -857,10 +867,19 @@ class TestTrafficDataset:
         )
 
         sample = dataset[0]
-        future_features = sample.x_dynamic_future
+        future_features_full = sample.x_dynamic_future
 
-        # Shape should be (batch_size, out_timesteps, num_future_features)
-        assert future_features.shape == (2, 2, 2)
+        # Shape should be (batch_size, out_timesteps, raw_future_features + temporal_features)
+        assert future_features_full.shape == (
+            2,
+            2,
+            2 + dataset.num_temporal_features,
+        )
+        assert torch.equal(
+            future_features_full[:, :, 2:],
+            sample.x_temporal_future,
+        )
+        future_features = future_features_full[:, :, :2]
 
         # Verify that only future features are loaded and others are filtered out
         # The third feature "other_feat" should not appear in the future tensor

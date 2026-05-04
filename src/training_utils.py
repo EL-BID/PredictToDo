@@ -5,10 +5,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Optional
 
+import boto3
 import numpy as np
 import pandas as pd
 import torch
-import boto3
 
 
 def pad_collate(batch):

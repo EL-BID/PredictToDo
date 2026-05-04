@@ -80,6 +80,21 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# LaTeX build outputs
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+
 # IPython
 profile_default/
 ipython_config.py

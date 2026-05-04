@@ -3,7 +3,7 @@ name = "src"
 version = "0.1.0"
 description = "Traffic Forecasting System for Bogotá using Graph Neural Networks with spatio-temporal dynamics"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     # Machine Learning & Deep Learning
     "torch>=2.7.1",
@@ -77,6 +77,10 @@ include = ["src/**/*.py", "tests/**/*.py", "notebooks/**/*.py"]
 
 [tool.ruff.lint]
 select = ["I"]
+
+[tool.uv.extra-build-dependencies]
+torch-scatter = ["torch"]
+torch-sparse = ["torch"]
 
 # [tool.ruff.format]
 # quote-style = "double"
