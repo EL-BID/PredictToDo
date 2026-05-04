@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+*.ipynb text eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.gz binary
+*.pkl binary
+*.pickle binary
+*.h5 binary
+*.parquet binary
