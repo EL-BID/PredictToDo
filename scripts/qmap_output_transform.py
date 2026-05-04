@@ -35,15 +35,58 @@ class QuantileMapCalibrator:
         )
 
 
+class HurdleQMapCalibrator:
+    def __init__(
+        self,
+        zero_threshold: float,
+        positive_x_quantiles: list[float],
+        positive_y_quantiles: list[float],
+        zero_blend_width: float = 0.2,
+    ) -> None:
+        self.zero_threshold = float(zero_threshold)
+        self.zero_blend_width = float(zero_blend_width)
+        self.positive_x_quantiles = np.asarray(positive_x_quantiles, dtype=float)
+        self.positive_y_quantiles = np.asarray(positive_y_quantiles, dtype=float)
+
+    def transform(self, values: np.ndarray | list[float]) -> np.ndarray:
+        arr = np.asarray(values, dtype=float)
+        positive = np.interp(
+            arr,
+            self.positive_x_quantiles,
+            self.positive_y_quantiles,
+            left=self.positive_y_quantiles[0],
+            right=self.positive_y_quantiles[-1],
+        )
+        if self.zero_blend_width <= 0:
+            weight = (arr >= self.zero_threshold).astype(float)
+        else:
+            weight = np.clip((arr - self.zero_threshold) / self.zero_blend_width, 0.0, 1.0)
+        return weight * positive
+
+
 def load_transform_config(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text())
 
 
 def load_qmap_calibrator(path: str | Path) -> QuantileMapCalibrator:
     payload = json.loads(Path(path).read_text())
+    if "qmap_global" in payload:
+        payload = payload["qmap_global"]
     return QuantileMapCalibrator(
         x_quantiles=payload["x_quantiles"],
         y_quantiles=payload["y_quantiles"],
+    )
+
+
+def load_hurdle_calibrator(path: str | Path) -> HurdleQMapCalibrator:
+    payload = json.loads(Path(path).read_text())
+    if "hurdle_qmap" in payload:
+        payload = payload["hurdle_qmap"]
+    return HurdleQMapCalibrator(
+        zero_threshold=payload["zero_threshold"],
+        zero_blend_width=payload.get("zero_blend_width", 0.2),
+        positive_x_quantiles=payload["positive_x_quantiles"],
+        positive_y_quantiles=payload["positive_y_quantiles"],
     )
 
 
@@ -69,6 +112,14 @@ def apply_hybrid_transform(
     return (1.0 - weight) * raw + weight * qmap
 
 
+def apply_hurdle_qmap(
+    predicted_level: np.ndarray | list[float],
+    calibrator_path: str | Path,
+) -> np.ndarray:
+    calibrator = load_hurdle_calibrator(calibrator_path)
+    return calibrator.transform(predicted_level)
+
+
 def apply_selected_transform(
     predicted_level: np.ndarray | list[float],
     calibrator_path: str | Path,
@@ -84,6 +135,9 @@ def apply_selected_transform(
     if selected_model == "qmap_global":
         return apply_qmap_global(predicted_level, calibrator_path)
 
+    if selected_model == "hurdle_qmap":
+        return apply_hurdle_qmap(predicted_level, calibrator_path)
+
     if selected_model.startswith("hybrid_"):
         threshold = float(selected_model.replace("hybrid_", "").replace("_", "."))
         blend_width = float(config.get("hybrid_blend_width", 0.2))
@@ -96,7 +150,7 @@ def apply_selected_transform(
 
     raise ValueError(
         f"Unsupported selected_model={selected_model!r}. "
-        "Supported values: raw, qmap_global, hybrid_0_6, hybrid_0_8."
+        "Supported values: raw, qmap_global, hurdle_qmap, hybrid_0_6, hybrid_0_8."
     )
 
 

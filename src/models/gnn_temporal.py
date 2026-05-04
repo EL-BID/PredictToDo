@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch_geometric_temporal.nn.recurrent import A3TGCN2, TGCN, GConvGRU, GConvLSTM
+from torch_geometric_temporal.nn.recurrent import A3TGCN, TGCN, GConvGRU, GConvLSTM
 
 
 def make_batched_edge_index(edge_index: torch.Tensor, num_nodes: int, batch_size: int, device):
@@ -52,18 +52,15 @@ class GNN_Temporal_Model(nn.Module):
             self.recurrent = GConvLSTM(32 + dynamic_dim, 32, K=2)
             self.future_recurrent = GConvLSTM(32 + future_dim, 32, K=2)
         elif model_type == "A3TGCN":
-            self.recurrent = A3TGCN2(
+            # A3TGCN is used as a batched encoder over the full past sequence.
+            # For future rollout we keep a recurrent decoder compatible with the
+            # existing "known future covariates + hidden state" step-wise setup.
+            self.recurrent = A3TGCN(
                 in_channels=32 + dynamic_dim,
                 out_channels=32,
                 periods=input_seq_len,
-                kernel=2,
             )
-            self.future_recurrent = A3TGCN2(
-                in_channels=32 + future_dim,
-                out_channels=32,
-                periods=forecast_horizon,
-                kernel=2,
-            )
+            self.future_recurrent = TGCN(32 + future_dim, 32)
         else:
             raise ValueError("Unknown model type")
 
@@ -111,14 +108,15 @@ class GNN_Temporal_Model(nn.Module):
                 else:
                     h_flat = self.recurrent(x_flat, self.edge_index, H=h_flat)  # (B*N,32)
         else:
-            # Build full (Tin, B*N, in) then reshape to (B*N, Tin, in) if your cell expects that
+            # A3TGCN expects node features for T periods. We encode each batch
+            # item independently with the shared static graph, then switch back
+            # to the existing batched step-wise decoder for future rollout.
             seq = []
-            for t in range(Tin):
-                x_t = dynamic_seq_inputs[:, t]
-                combined = torch.cat([static_embed, x_t], -1)  # (B,N,in)
-                seq.append(combined.reshape(B * N, -1).unsqueeze(1))
-            full_seq = torch.cat(seq, dim=1)  # (B*N, Tin, in)
-            h_flat = self.recurrent(full_seq, self.edge_index)  # -> (B*N,32) or similar
+            for b in range(B):
+                combined = torch.cat([static_embed[b].unsqueeze(0).expand(Tin, N, 32), dynamic_seq_inputs[b]], dim=-1)
+                x_b = combined.permute(1, 2, 0).contiguous()  # (N, in_channels, Tin)
+                seq.append(self.recurrent(x_b, edge_index))
+            h_flat = torch.stack(seq, dim=0).reshape(B * N, 32)
 
         # ---- Future steps ----
         outs = []

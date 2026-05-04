@@ -1,71 +1,3 @@
-\begin{filecontents}{references.bib}
-@article{williams2003modeling,
-  author = {Williams, Billy and Hoel, Lester},
-  year = {2003},
-  month = {11},
-  pages = {664-672},
-  title = {Modeling and Forecasting Vehicular Traffic Flow as a Seasonal ARIMA Process: Theoretical Basis and Empirical Results},
-  volume = {129},
-  journal = {Journal of Transportation Engineering},
-  doi = {10.1061/(ASCE)0733-947X(2003)129:6(664)}
-}
-
-@misc{yao2018deep,
-  title={Deep Multi-View Spatial-Temporal Network for Taxi Demand Prediction}, 
-  author={Huaxiu Yao and Fei Wu and Jintao Ke and Xianfeng Tang and Yitian Jia and Siyu Lu and Pinghua Gong and Jieping Ye and Zhenhui Li},
-  year={2018},
-  eprint={1802.08714},
-  archivePrefix={arXiv},
-  primaryClass={cs.LG},
-  url={https://arxiv.org/abs/1802.08714}, 
-}
-
-@misc{kipf2016semi,
-  title={Semi-Supervised Classification with Graph Convolutional Networks}, 
-  author={Thomas N. Kipf and Max Welling},
-  year={2017},
-  eprint={1609.02907},
-  archivePrefix={arXiv},
-  primaryClass={cs.LG},
-  url={https://arxiv.org/abs/1609.02907}, 
-}
-
-@misc{seo_gcrn,
-  title={Structured Sequence Modeling with Graph Convolutional Recurrent Networks}, 
-  author={Youngjoo Seo and Michaël Defferrard and Pierre Vandergheynst and Xavier Bresson},
-  year={2016},
-  eprint={1612.07659},
-  archivePrefix={arXiv},
-  primaryClass={stat.ML},
-  url={https://arxiv.org/abs/1612.07659}, 
-}
-
-@article{zhao_tgcn,
-   title={T-GCN: A Temporal Graph Convolutional Network for Traffic Prediction},
-   volume={21},
-   ISSN={1558-0016},
-   url={http://dx.doi.org/10.1109/TITS.2019.2935152},
-   DOI={10.1109/tits.2019.2935152},
-   number={9},
-   journal={IEEE Transactions on Intelligent Transportation Systems},
-   publisher={Institute of Electrical and Electronics Engineers (IEEE)},
-   author={Zhao, Ling and Song, Yujiao and Zhang, Chao and Liu, Yu and Wang, Pu and Lin, Tao and Deng, Min and Li, Haifeng},
-   year={2020},
-   month=sep, pages={3848-3858}
-}
-
-@misc{zhu_a3tgcn,
-      title={A3T-GCN: Attention Temporal Graph Convolutional Network for Traffic Forecasting}, 
-      author={Jiawei Zhu and Yujiao Song and Ling Zhao and Haifeng Li},
-      year={2020},
-      eprint={2006.11583},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2006.11583}, 
-}
-\end{filecontents}
-
-
 \documentclass[11pt, a4paper]{article}
 
 % --- Packages ---
@@ -77,7 +9,6 @@
 \usepackage{hyperref}
 \usepackage{xcolor}
 \usepackage{setspace}
-\usepackage{lipsum} % For placeholder text
 
 % --- Page Formatting ---
 \geometry{left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm}
@@ -102,7 +33,7 @@
 \maketitle
 
 \begin{abstract}
-\noindent \textbf{Abstract:} Traffic congestion remains one of the most critical challenges for urban planning in Latin America, particularly in high-density metropolitan areas like Bogotá. Accurate forecasting of traffic flow is essential for optimizing traffic management systems and reducing economic and environmental costs. This white paper presents a novel Spatio-Temporal Graph Neural Network (ST-GNN) framework developed in partnership with the Inter-American Development Bank (IDB) and the Government of Bogotá. We review the evolution of traffic prediction models—from classical statistical methods to state-of-the-art deep learning architectures. Specifically, we evaluate the efficacy of Recurrent Graph Convolutional Networks, including \textbf{TGCN}, \textbf{GConvGRU}, and \textbf{GConvLSTM}, as well as attention-based mechanisms like \textbf{A3TGCN}. Our proposed model leverages the complex topological structure of Bogotá's road network to deliver precise, real-time traffic predictions.
+\noindent \textbf{Abstract:} Traffic congestion remains one of the most critical challenges for urban planning in Latin America, particularly in high-density metropolitan areas like Bogotá. Accurate forecasting of traffic conditions is essential for optimizing traffic management systems and reducing economic and environmental costs. This white paper presents the current Spatio-Temporal Graph Neural Network (ST-GNN) framework developed in partnership with the Inter-American Development Bank (IDB) and the Government of Bogotá. The repository has evolved from dataset preparation into an end-to-end sparse graph-temporal system with \texttt{TrafficDataset}, artifact-driven seed-time sampling, SageMaker training, and real-time dense inference evaluation. The active model comparison focuses on \textbf{GConvLSTM}, \textbf{GConvGRU}, and \textbf{TGCN}; attention-based methods such as \textbf{A3TGCN} remain relevant literature baselines rather than the center of the latest training line.
 \end{abstract}
 
 \section{Introduction}
@@ -113,9 +44,19 @@ The core of this initiative lies in the ability to accurately predict traffic co
 
 To address these limitations, we employ Spatio-Temporal Graph Neural Networks (ST-GNNs). These models represent the road network as a graph, where road segments are nodes and their connections (based on traffic flow and proximity) are edges, allowing for the simultaneous extraction of spatial and temporal features.
 
-Recent advancements in this field have produced powerful architectures. The \textbf{GConvLSTM} and \textbf{GConvGRU}~\cite{seo_gcrn} integrate Graph Convolutional Networks (GCNs) with recurrent units, effectively learning sequence patterns on graph structures. Similarly, the Temporal Graph Convolutional Network (\textbf{TGCN})~\cite{zhao_tgcn} has demonstrated superior performance by combining GCNs with Gated Recurrent Units (GRUs) to capture non-linear traffic dynamics. Furthermore, attention mechanisms have been introduced to weigh the importance of different temporal instances, as seen in the Attention Based Spatial-Temporal Graph Convolutional Network (\textbf{A3TGCN})~\cite{zhu_a3tgcn}.
+Recent advancements in this field have produced powerful architectures. The \textbf{GConvLSTM} and \textbf{GConvGRU}~\cite{seo_gcrn} integrate Graph Convolutional Networks (GCNs) with recurrent units, effectively learning sequence patterns on graph structures. Similarly, the Temporal Graph Convolutional Network (\textbf{TGCN})~\cite{zhao_tgcn} combines GCNs with Gated Recurrent Units (GRUs) to capture non-linear traffic dynamics. Attention mechanisms, as in the Attention Based Spatial-Temporal Graph Convolutional Network (\textbf{A3TGCN})~\cite{zhu_a3tgcn}, remain an important reference point, although the current empirical comparison in this repository concentrates on GConvLSTM, GConvGRU, and TGCN.
 
-This white paper details the deployment of these advanced ST-GNN architectures tailored to the specific constraints and availability of data in Bogotá. By accurately modeling the spatio-temporal dependencies of the city's traffic, we aim to provide actionable insights for the \textit{Secretaría de Movilidad}, facilitating proactive rather than reactive traffic management.
+This white paper details the deployment path for these ST-GNN architectures under Bogotá-specific data and operational constraints. The current system combines sparse preprocessing, geographically coherent graph batches, artifact-driven sampling of informative forecast windows, managed SageMaker training, and a separate production inference path. By accurately modeling the spatio-temporal dependencies of the city's traffic, we aim to provide actionable insights for the \textit{Secretaría de Movilidad}, facilitating proactive rather than reactive traffic management.
+
+The practical contribution of this work is therefore not limited to the selection of a neural architecture. It also includes the construction of a graph-temporal data contract for Bogotá, the transformation of highly sparse mobility observations into efficient training tensors, the design of a sampler that explicitly addresses the imbalance between uncongested and congested conditions, and the creation of an evaluation path that distinguishes sparse validation performance from dense operational behavior. These engineering decisions are central to the scientific claim of the project, because they determine which traffic states the model sees during training and how its predictions can be interpreted after deployment.
+
+\section{System Overview}
+
+The forecasting system can be understood as an end-to-end graph-temporal pipeline. Raw geospatial, traffic, event, incident, road-state, weather, and urban context data are first transformed by feature-specific processors into road-segment-level observations. These observations are merged into sparse HDF5 datasets indexed by node, time, and feature, while the road network is represented as a directed graph whose edges encode legal traffic flow and spatial proximity. The resulting processed data is consumed by \texttt{TrafficDataset}, which materializes seed-local subgraphs and temporal windows for training.
+
+The training runtime then applies a chronological temporal split, builds one of the supported ST-GNN model families, and selects between the legacy seed-based sampler and the newer artifact-driven seed-time sampler. In the current experimental line, SageMaker jobs read preprocessed data from EFS, retrieve the consolidated seed-time artifact from S3 when required, train GConvLSTM, GConvGRU, and TGCN variants, and export trained model artifacts back to S3. This separation between large processed data, sampling metadata, and model outputs makes the system reproducible enough to compare model families while still remaining practical for large-scale training.
+
+Inference follows a related but distinct operational path. The production inference repository reads current parquet sources and real-time data stores rather than historical HDF5 target files, constructs graph-aligned tensors for the current observational anchor timestamp, runs model inference over seed-local subgraphs, and reconstructs city-wide forecasts by combining overlapping predictions. This distinction is important because offline validation and real-time dense evaluation answer different questions: the former measures model behavior on historical sparse training targets, while the latter measures behavior over a fuller operational prediction surface.
 
 \section{Literature Review}
 
@@ -193,16 +134,14 @@ These advanced ST-GNN frameworks provide the theoretical foundation for the pred
 
 \section{Data Processing and Infrastructure}
 
-The deployment of Spatio-Temporal Graph Neural Networks for traffic forecasting in Bogotá presented unique computational and engineering challenges that required innovative solutions. This section details the comprehensive data processing pipeline developed to handle the scale and complexity of urban traffic data while ensuring efficient training and inference capabilities.
+The deployment of Spatio-Temporal Graph Neural Networks for traffic forecasting in Bogotá presented unique computational and engineering challenges that required specialized preprocessing and runtime contracts. The repository now implements a sparse graph-temporal pipeline that converts raw geospatial, traffic, event, incident, road-state, weather, and contextual inputs into HDF5 sparse matrices and graph metadata consumed by \texttt{TrafficDataset}. This section summarizes the processing path that supports both training and inference while preserving the graph consistency required by recurrent GNN models.
 
 \subsection{Feature Engineering and Data Sources}
 
 Our approach leverages a diverse array of urban data sources to capture the multifaceted nature of traffic dynamics in Bogotá. The feature engineering pipeline processes multiple heterogeneous datasets into a unified spatial-temporal representation suitable for graph-based learning.
 
 \subsubsection{Primary Traffic Features}
-The core traffic data is derived from Waze's crowdsourced traffic jams dataset, providing real-time insights into congestion patterns across the city's road network. The \texttt{JamsProcessor} extracts and spatially assigns traffic features to road segments through a sophisticated geometric matching algorithm:
-
-Traffic data from Waze's crowdsourced traffic jams dataset serves as the primary source for understanding congestion patterns across Bogotá's road network. To integrate this data into the model, a comprehensive processing pipeline was developed. First, a spatial assignment process was implemented, where traffic jams were mapped to specific road segments using a 4-meter buffer around each road's geometry. This approach ensures accurate spatial alignment between the reported jams and the corresponding road segments. Additionally, overlap thresholds were applied to further refine the spatial join process.
+The core traffic data is derived from Waze's crowdsourced traffic jams dataset, providing real-time insights into congestion patterns across the city's road network. The \texttt{JamsProcessor} extracts and spatially assigns traffic features to road segments through geometric matching. Traffic jams are mapped to specific road segments using a 4-meter buffer around each road's geometry, with overlap thresholds applied to refine the spatial join process.
 
 To align the temporal granularity of the raw jam data with the model's requirements, the data was aggregated into 15-minute intervals. This temporal resolution was chosen to balance the need for capturing traffic dynamics with the computational efficiency required for large-scale data processing. The aggregated data includes multiple features for each road segment and time window, such as congestion severity (jam level), delay metrics, average speeds, and jam count statistics. These features provide a multi-dimensional representation of traffic conditions, enabling the model to capture the complex dynamics of urban mobility.
 
@@ -215,7 +154,7 @@ Disruptions to normal traffic flow, such as accidents, road closures, and public
 Finally, we implemented \texttt{RoadGraphConstructor} to transform Bogotá's road network into a directed graph, which was specifically designed to optimize the data for spatial-temporal learning. Each road segment was represented as a graph node, enriched with static features such as geometric properties (e.g., road length, cardinal direction, and flow directionality), land use context (e.g., building counts by type, population density, and land use composition), and transit infrastructure (e.g., bus stop counts and proximity to public transportation corridors). This comprehensive representation of the road network ensures that the model can effectively capture the unique characteristics of Bogotá's urban environment.
 
 \subsubsection{Edge Construction with Legal Traffic Flow}
-The construction of edges in the road network graph was carefully designed to incorporate the legal traffic flow constraints and spatial proximity relationships. Legal connections, which represent the navigable paths between road segments based on traffic directionality and intersection geometry, were assigned a weight of 1$.0$. These connections ensure that the graph accurately reflects the permissible movements within the road network, capturing the inherent structure and constraints of urban traffic.
+The construction of edges in the road network graph was carefully designed to incorporate the legal traffic flow constraints and spatial proximity relationships. Legal connections, which represent the navigable paths between road segments based on traffic directionality and intersection geometry, were assigned a weight of $1.0$. These connections ensure that the graph accurately reflects the permissible movements within the road network, capturing the inherent structure and constraints of urban traffic.
 
 In addition to legal connections, spatial proximity connections were introduced to account for the influence of geographically close but not directly connected road segments. These connections, assigned a lower weight of $0.3$, allow the Spatio-Temporal Graph Neural Network (ST-GNN) to learn spatial correlations that may exist between nearby road segments, even in the absence of direct connectivity. This approach enhances the model's ability to capture the complex spatial dependencies present in urban traffic networks while maintaining respect for the legal traffic flow constraints.
 
@@ -255,19 +194,17 @@ $$
 
 As shown, the COO representation significantly reduces the storage requirements by omitting zero entries, making it an ideal choice for handling sparse traffic data.
 
-To further optimize storage and retrieval, the processed sparse data is stored in the HDF5 format. This format offers several advantages, including lazy loading, which ensures that only the required data slices are loaded into memory during training. This capability is particularly important for processing datasets that exceed the available RAM, as it enables efficient training without the need for extensive hardware resources. Additionally, HDF5's built-in compression reduces disk storage requirements while maintaining rapid access times. Pre-computed time-based indices are also cached, enabling constant-time access to temporal windows during training.
+To further optimize storage and retrieval, the processed sparse data is stored in the HDF5 format. This format offers several advantages, including lazy loading, which ensures that only the required data slices are loaded into memory during training. This capability is particularly important for processing datasets that exceed the available RAM, as it enables efficient training without the need for extensive hardware resources. Additionally, HDF5's built-in compression reduces disk storage requirements while maintaining rapid access times. Pre-computed time-based indices are also cached, enabling efficient access to temporal windows during training.
 
-These innovations in data storage and retrieval were critical for managing the scale and complexity of the urban traffic data. The combination of sparse matrix representation and HDF5 storage architecture ensured that the training process remained computationally feasible, even on commodity hardware, while preserving the rich spatiotemporal relationships essential for accurate traffic forecasting.
+These innovations in data storage and retrieval were critical for managing the scale and complexity of the urban traffic data. The combination of sparse matrix representation and HDF5 storage architecture ensures that the training process remains computationally feasible while preserving the rich spatiotemporal relationships essential for accurate traffic forecasting. In the current runtime, \texttt{TrafficDataset} materializes seed-local subgraphs and temporal windows from this sparse storage contract, keeping each batch tied to one compatible graph topology.
 
-\subsection{Intelligent Batching Strategy}
+\subsection{TrafficDataset Runtime Contract}
 
-A critical innovation in our approach is the geographic coherence-preserving batching strategy, essential for effective GNN training on large urban networks.
+\texttt{TrafficDataset} is the central runtime abstraction that connects the processed sparse data to the ST-GNN training loop. The dataset keeps graph metadata and static node features in memory, while dynamic features and targets are retrieved lazily for the requested temporal window. This design avoids loading the full dense city-time-feature tensor, which would be unnecessarily large given the sparsity of traffic incidents, irregularities, events, and several contextual sources.
 
-\subsubsection{Seed Node Selection and Neighborhood Expansion}
+The most important constraint imposed by this dataset contract is graph consistency inside a batch. A training sample is not defined only by a timestamp; it is defined by a seed-local subgraph and a time window. All examples in a batch must therefore share one compatible \texttt{edge\_index}. The current implementation preserves this invariant by allowing the time index to vary inside a batch while keeping the seed fixed. In practical terms, each batch contains one seed-local road subnetwork and multiple historical windows drawn from that same subnetwork.
 
-To ensure effective training of the Spatio-Temporal Graph Neural Network (ST-GNN) on Bogotá's road network, a systematic seed node selection strategy was employed. Instead of relying on random sampling, which could lead to uneven representation of the road network, seed nodes were carefully chosen to optimize coverage and ensure a balanced representation of the urban zones. The selection process was designed to minimize overlap between batches while maximizing network coverage, ensuring that every road segment was included in at least one batch during training. Additionally, the spatial distribution of seed nodes was carefully managed to avoid clustering in high-density areas, thereby maintaining a balanced representation of both central and peripheral urban zones.
-
-Once the seed nodes were selected, each batch was constructed by expanding from a seed node using a Breadth-First Search (BFS) algorithm. This approach ensured that each batch contained geographically contiguous road segments, which is critical for preserving local spatial relationships that are essential for effective graph neural network learning. The size of each batch was carefully controlled, typically limited to 500 nodes, to fit within the memory constraints of the GPU while maintaining sufficient spatial context for the model. To further enhance the training process, seed nodes were dynamically reassigned during training, ensuring that all areas of the city were represented across multiple training epochs. This systematic batching strategy was crucial for maintaining the spatial correlations inherent in the road network, as random batching would have disrupted these relationships and significantly degraded the model's learning effectiveness.
+This contract also determines how missing sparse values are interpreted. For traffic severity scoring and dense reconstruction, missing sparse entries represent the absence of an observed congestion signal and are treated as level 0 where appropriate. This convention is especially important for the seed-time artifact and for dense real-time evaluation, because failing to count missing traffic observations as zero would inflate the apparent prevalence of high-severity samples.
 
 \subsection{Missing Data Imputation Strategy}
 
@@ -281,9 +218,31 @@ The diverse range of features in the dataset, which included binary event indica
 
 To maintain consistency between the training and inference phases, normalization constants were computed globally across the entire temporal range of the dataset. This ensured that the normalized values were comparable across different time periods, avoiding potential discrepancies that could arise from using separate normalization parameters for training and inference. To minimize memory overhead, normalization was applied on-the-fly during data loading using pre-computed tensors. This approach allowed the system to handle large datasets efficiently while maintaining the integrity of the normalized data.
 
-By implementing these strategies for seed node selection, missing data imputation, and normalization, the data processing pipeline was able to effectively prepare the urban traffic data for training sophisticated ST-GNN models. These methods ensured that the model could learn from the complex spatio-temporal relationships inherent in Bogotá's road network, ultimately enhancing the accuracy and robustness of the traffic forecasting system.
+By implementing these strategies for sparse storage, seed-time batching, missing data imputation, and normalization, the data processing pipeline prepares the urban traffic data for training sophisticated ST-GNN models. These methods ensure that the model can learn from the complex spatio-temporal relationships inherent in Bogotá's road network while preserving the batch invariants required by the graph-temporal runtime.
 
 This comprehensive data processing pipeline enables the training of sophisticated ST-GNN models on city-scale traffic data while maintaining computational efficiency and preserving the rich spatial-temporal relationships essential for accurate traffic forecasting.
+
+\section{Seed-Time Sampling Methodology}
+
+One of the main empirical challenges in the project is the imbalance of congestion states. Urban traffic data contains many road segments and time windows with no meaningful congestion signal, while the operationally important cases are precisely the medium- and high-severity events that occur less frequently. Earlier training runs were therefore dominated by low-severity samples and class 0 behavior. A sampler that merely walks through global time indices can improve temporal coverage, but it does not fully align sample severity with the actual seed-local graph seen by the model.
+
+\subsection{Sampling Unit}
+
+The current methodology defines the durable sampling unit as \texttt{(seed\_id, time\_idx)} rather than \texttt{time\_idx} alone. This distinction is central to the training design. The model observes a sample through a seed-local road subgraph, so a time window that appears severe globally may not contain meaningful congestion inside a particular seed-local neighborhood. Conversely, a localized congestion event may be important for one subgraph even if the global city-level average is modest. By scoring seed-time pairs directly, the sampler can select examples that are informative for the graph actually presented to the model.
+
+\subsection{Artifact Construction}
+
+The seed-time artifact is precomputed outside the training loop to avoid expensive severity scoring during model training. The artifact contains rows keyed by seed and time index, with a congestion score and a bucket label. The final combined universe currently covers 1,937 seeds and 2,000 selected time indices, yielding 3,874,000 seed-time rows. The resulting bucket distribution is approximately balanced enough for controlled sampling: 1,939,990 low rows, 963,980 medium rows, and 970,030 high rows. The thresholding procedure uses the corrected convention that sparse missing target values count as zero, which prevents overestimating the frequency of severe congestion.
+
+\subsection{Epoch Planning}
+
+During training, the artifact is not sampled row by row as if every seed-time pair were independent. Instead, the runtime preserves the \texttt{TrafficDataset} graph constraint by planning one seed per batch and multiple time indices within that seed. When \texttt{--seed-time-artifact-path} is provided, \texttt{training\_entrypoint.py} downloads and caches the artifact if necessary, \texttt{SeedTimeEpochPlanner} groups rows by seed and bucket, and \texttt{PlannedSeedTimeBatchSampler} maps the resulting plan back into standard dataset indices.
+
+With a batch size of 16 and one epoch cycle, the intended combined-artifact plan yields 1,937 batches per epoch and 30,992 sample slots. The target bucket mix is approximately 45\% high, 30\% medium, and 25\% low congestion. In the practical integer allocation for a 16-window batch, this corresponds to 7 high, 5 medium, and 4 low samples. This choice deliberately increases exposure to informative congestion cases while retaining enough low-congestion examples to prevent the model from losing calibration on normal traffic conditions.
+
+\subsection{Rationale}
+
+The main advantage of this approach is that it improves the training signal without redesigning the dataset materialization path. The expensive and performance-sensitive part of the system, \texttt{TrafficDataset.__getitem__()}, continues to receive standard integer indices and to construct tensors through the existing sparse HDF5 contract. The sampling innovation is isolated in the planning layer. This separation reduces implementation risk, preserves graph consistency, and makes the sampling strategy auditable through the artifact metadata.
 
 \section{Model Architecture and Training Infrastructure}
 
@@ -301,13 +260,13 @@ The second component is the temporal graph convolution module, which serves as t
 The third component is the future feature integration module, which is designed to incorporate known future features, such as planned events and weather forecasts, into the prediction process. This module employs a separate recurrent architecture to process these external factors over the forecast horizon, thereby enhancing the model's ability to predict future traffic conditions with greater accuracy.
 
 \subsubsection{Supported ST-GNN Variants}
-The framework is designed to support a variety of state-of-the-art Spatio-Temporal Graph Neural Network (ST-GNN) architectures, each tailored to address specific challenges in traffic forecasting. The first variant, GConvGRU, integrates Graph Convolutional Networks (GCNs) with Gated Recurrent Units (GRUs). This architecture is particularly well-suited for capturing short to medium-term traffic dependencies due to its efficient memory usage and rapid training convergence.
+The framework is designed to support multiple Spatio-Temporal Graph Neural Network (ST-GNN) architectures, while the latest completed comparison line focuses on three active model families. The first variant, GConvGRU, integrates Graph Convolutional Networks (GCNs) with Gated Recurrent Units (GRUs). This architecture is particularly well-suited for capturing short to medium-term traffic dependencies due to its efficient memory usage and rapid training convergence.
 
 The second variant, Temporal Graph Convolutional Network (TGCN), combines GCN-based spatial processing with GRU-based temporal modeling in a streamlined architecture. TGCN strikes an effective balance between computational efficiency and predictive accuracy, making it a robust choice for modeling urban traffic patterns.
 
 The third variant, GConvLSTM, extends the capabilities of GCNs by incorporating Long Short-Term Memory (LSTM) cells. This architecture excels in modeling longer-term dependencies, such as weekly and seasonal traffic patterns, although it comes with increased computational complexity.
 
-The fourth and final variant, Attention Temporal Graph Convolutional Network (A3TGCN), enhances the TGCN architecture by introducing temporal attention mechanisms. These mechanisms dynamically assign weights to historical time steps, allowing the model to prioritize the most relevant temporal information. This makes A3TGCN particularly effective for handling irregular traffic events and varying pattern importance across different temporal contexts.
+A fourth variant, Attention Temporal Graph Convolutional Network (A3TGCN), remains a supported or historical reference architecture. It enhances the TGCN architecture by introducing temporal attention mechanisms that dynamically assign weights to historical time steps. However, A3TGCN is not the center of the latest three-model SageMaker comparison documented for the current repository state.
 
 \subsubsection{Multi-Target Prediction Architecture}
 A distinguishing feature of the proposed framework is its capability for multi-target prediction, which allows for the simultaneous forecasting of multiple traffic metrics. The primary target of the model is the jam level, which quantifies congestion severity on a scale from 0 to 5 and serves as the core variable for assessing traffic conditions. In addition to the jam level, the model also predicts the mean jam velocity, which provides complementary insights into the characteristics of traffic flow.
@@ -319,11 +278,11 @@ The framework employs a joint optimization strategy to predict both targets simu
 Training ST-GNN models on city-scale data requires sophisticated infrastructure capable of handling the computational and memory demands of large graph neural networks.
 
 \subsubsection{AWS SageMaker Integration}
-The training infrastructure for the Spatio-Temporal Graph Neural Network (ST-GNN) models is built on AWS SageMaker, which provides a scalable and managed environment for training. The system utilizes GPU-optimized instances, specifically the ml.g4dn.8xlarge configuration. These instances are equipped with 32 vCPUs, 128 GB of RAM, and NVIDIA T4 GPUs with 16 GB of VRAM, ensuring efficient processing of large graph batches. This hardware configuration is particularly suited for the computational demands of large-scale graph neural network training.
+The training infrastructure for the Spatio-Temporal Graph Neural Network (ST-GNN) models is built on AWS SageMaker, which provides a scalable and managed environment for training. The canonical runtime entrypoint is \texttt{src/training\_entrypoint.py}, typically launched through the SageMaker training notebook so that the model family, image, VPC configuration, EFS mount, S3 output path, and seed-time artifact parameters are recorded consistently. Recent runs used GPU-optimized SageMaker instances including \texttt{ml.g4dn.8xlarge}, \texttt{ml.g5.4xlarge}, and \texttt{ml.g5.8xlarge}, depending on the model family.
 
 To ensure reproducibility and consistency across different infrastructure configurations, the training environment is containerized using custom Docker containers. These containers include all necessary dependencies, such as PyTorch, PyTorch Geometric, and other specialized graph neural network libraries. This approach simplifies the deployment process and ensures that the training environment remains consistent across different runs and setups.
 
-Additionally, the training pipeline integrates with the AWS Elastic File System (EFS), which provides high-throughput and low-latency access to preprocessed datasets. This integration eliminates the need for local storage constraints by enabling efficient data streaming during training. The use of EFS ensures that the training process can handle large datasets without being limited by the storage capacity of individual instances.
+Additionally, the training pipeline integrates with the AWS Elastic File System (EFS), which provides high-throughput and low-latency access to preprocessed datasets. Seed-time artifacts and final model outputs are exchanged through S3, while the entrypoint can download and cache the sampling artifact locally for the training job. This design separates large preprocessed data, sampling metadata, and trained model artifacts while keeping the runtime reproducible enough for model-family comparisons.
 
 \subsubsection{Advanced Memory Management}
 Given the memory-intensive nature of large-scale graph processing, the training system incorporates several advanced memory optimization techniques. One such technique is dynamic graph batching, where edge indices are constructed dynamically for each batch. This approach allows the creation of batched graph representations that maximize GPU utilization while adhering to memory constraints.
@@ -334,21 +293,127 @@ Another critical optimization is gradient accumulation, which enables the use of
 
 The training process for the ST-GNN models is designed to address the unique challenges of urban traffic prediction. A key aspect of the training strategy is the use of temporal data splitting. Unlike traditional random data splitting, which can lead to unrealistic evaluation scenarios, this approach employs a chronological division of the dataset. Specifically, the training data comprises the first 80\% of the temporal sequence, while the most recent 20\% is reserved for validation. This method ensures that the evaluation process mimics real-world deployment scenarios, where future data is not available during model training. By strictly preventing future information from influencing past predictions, the temporal splitting approach ensures that the model's performance is evaluated in a realistic and unbiased manner.
 
-The loss function used for training the ST-GNN models is carefully designed to address the specific challenges associated with traffic congestion prediction. The primary component of the loss function is the Mean Squared Error (MSE), which provides the main optimization signal for both jam level and velocity predictions. To enhance the model's ability to predict critical traffic conditions, additional penalties are incorporated into the loss function. A Mean Absolute Error (MAE) penalty is applied for jam levels above a threshold ($\geq 2$), ensuring that the model accurately captures congestion events that are crucial for traffic management. Furthermore, an enhanced penalty is introduced for severe congestion levels ($\geq 4$), reflecting the significant impact of extreme traffic disruptions on urban mobility. To account for the operational consequences of under-predicting traffic issues, the loss function also includes a directional loss component. This asymmetric penalty favors the over-prediction of congestion levels, as it is generally more acceptable to overestimate traffic issues than to underestimate them.
+The loss function used for training the ST-GNN models is carefully designed to address the specific challenges associated with traffic congestion prediction. The base congestion objective combines a continuous regression term, differentiable class cross-entropy, an ordinal class-distance penalty, a large-error penalty, high- and severe-level MAE penalties, and an underprediction penalty. These terms reflect the operational asymmetry of the problem: missing severe congestion is more costly than small errors in uncongested conditions.
 
 The composite loss function is mathematically expressed as:
 \begin{equation}
-L = L_{MSE} + \lambda_1 L_{MAE}^{high} + \lambda_2 L_{MAE}^{severe} + \lambda_3 L_{directional},
+L = L_{\mathrm{base}} + \lambda_s L_{\mathrm{shape}},
 \end{equation}
-where $\lambda_1 = 0.5$, $\lambda_2 = 0.5$, and $\lambda_3 = 0.3$ are empirically determined weighting factors. These weights are carefully tuned to balance the contributions of each loss component, ensuring that the model effectively learns to predict both typical and extreme traffic conditions.
+where \(L_{\mathrm{base}}\) denotes the composite congestion objective and \(L_{\mathrm{shape}}\) is a newer auxiliary node-wise Pearson shape loss over the full forecast horizon. The shape term computes correlation between predicted and target future congestion trajectories for each node-series and converts it into a loss using \(1 - \rho\). Its weights increase for target series with higher standard deviation, wider range, or higher maximum congestion. This term is intended to improve whether the forecast follows rises, peaks, and declines over the 50-step horizon; it is not a calibration term, and excessive \(\lambda_s\) can trade away absolute level accuracy.
 
-To ensure comprehensive spatial coverage during training, a systematic node rotation strategy is employed. This strategy involves selecting different seed nodes for batch construction in each training epoch, ensuring that all road segments are included in the training process over multiple epochs. The seed selection process is optimized to minimize overlap between batches while maximizing network coverage. Typically, 8-12 distinct seed nodes are required to cover the entire road network of Bogotá. The geographic distribution of seed nodes is carefully managed to prevent overrepresentation of dense urban areas and to ensure adequate coverage of peripheral regions. This systematic approach to node rotation and batch construction is critical for maintaining the spatial correlations inherent in the road network, which are essential for effective graph neural network learning.
+To ensure comprehensive and informative coverage during training, the current runtime uses the seed-time planner described above when a sampling artifact is provided. The legacy seed-based sampler remains available, but the active direction is artifact-driven planning over seed and time pairs with controlled congestion-bucket ratios.
 
 The training configuration is designed to balance computational efficiency with model performance. Input sequences of 150 timesteps (equivalent to 37.5 hours) are used, with output horizons of $50$ timesteps (12.5 hours). This configuration provides sufficient historical context for the model to learn from while maintaining practical forecast utility. The training process employs the Adam optimizer with a learning rate of $0.001$, a gradient clipping norm of $1.0$, and a batch size of $16$, with each batch containing approximately $500$ nodes. To minimize I/O bottlenecks during GPU computation, the data loading process is optimized using multi-worker data loading with four workers, persistent workers, and prefetching with a factor of two. Comprehensive regularization techniques, including tensor validation, NaN/infinity detection, and statistical monitoring, are implemented to prevent training instabilities and ensure the robustness of the model.
 
-The training system also incorporates extensive monitoring and validation capabilities to ensure the quality and reliability of the trained models. Real-time metrics, including training and validation losses, component-wise loss breakdowns, and computational timing metrics, are logged and visualized to enable continuous monitoring of the training process. Integration with AWS SageMaker's metric definitions allows for automatic capture and visualization of training progress through AWS CloudWatch, facilitating remote monitoring of extended training runs. Regular model checkpointing is performed to preserve the model state, enabling training recovery in case of interruptions and allowing for model selection based on validation performance.
+The training system also incorporates monitoring and validation capabilities to ensure the quality and reliability of the trained models. Runtime logs include loss metrics, rounded congestion-level operational metrics, and timing metrics such as data wait, transfer, forward pass, loss computation, backward pass, optimizer step, and total step time. Integration with AWS SageMaker's metric definitions allows automatic capture and visualization through AWS CloudWatch, although the parsed metric surface is intentionally compressed to remain within SageMaker metric-definition limits. Regular model checkpointing is performed to preserve the model state, enabling model selection based on validation performance.
 
 By combining advanced memory management techniques, a robust training strategy, and comprehensive monitoring capabilities, the training infrastructure is well-equipped to handle the challenges of training sophisticated ST-GNN models on large-scale urban traffic data. This ensures that the resulting models are both accurate and efficient, making them suitable for deployment in real-world traffic management systems.
+
+\section{Experimental Setup}
+
+The current experimental setup is designed to approximate operational forecasting while avoiding temporal leakage. The processed time axis is split chronologically, with earlier windows used for training and later windows reserved for validation. This is preferable to random splitting because real deployment always predicts future conditions from past observations. The model receives 150 historical timesteps, equivalent to 37.5 hours at a 15-minute resolution, and predicts 50 future timesteps, equivalent to 12.5 hours.
+
+The active comparison line focuses on GConvLSTM, GConvGRU, and TGCN. Training jobs are launched through SageMaker using the current container image, the EFS-mounted processed dataset, model-family-specific S3 output prefixes, and the final seed-time artifact when the planner-based sampler is enabled. The latest completed comparison line corresponds to the 2026-04-20 shape-loss experiments. Those runs use the newer sampling artifact and the auxiliary shape-following loss described above.
+
+The evaluation metrics are intentionally divided into two families. Offline validation metrics measure performance on the historical validation split produced from the sparse training dataset. These include exact rounded-level accuracy, plus-or-minus-one rounded-level accuracy, level MAE, and per-level behavior when available. Dense real-time evaluation measures the behavior of production-style prediction surfaces against Waze jam observations, after interpreting missing jam observations as level 0. These two evaluation surfaces are complementary, but they should not be treated as numerically interchangeable because they evaluate different data distributions.
+
+\begin{table}[htbp]
+\centering
+\caption{Current training and evaluation configuration.}
+\begin{tabular}{|p{0.32\textwidth}|p{0.56\textwidth}|}
+\hline
+\textbf{Component} & \textbf{Current configuration} \\
+\hline
+Historical input horizon & 150 timesteps, 37.5 hours \\
+\hline
+Forecast horizon & 50 timesteps, 12.5 hours \\
+\hline
+Temporal split & Chronological train-validation split \\
+\hline
+Batch structure & One seed-local graph, multiple time windows \\
+\hline
+Batch size & 16 time windows per seed batch \\
+\hline
+Active model families & GConvLSTM, GConvGRU, TGCN \\
+\hline
+Sampling artifact & 1,937 seeds and 3,874,000 seed-time rows \\
+\hline
+Primary runtime & AWS SageMaker with EFS and S3 artifacts \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Results and Current Evaluation Status}
+
+\subsection{Offline Validation Results}
+
+The latest completed SageMaker comparison line uses the 2026-04-20 shape-loss runs for GConvLSTM, GConvGRU, and TGCN. In this validation line, GConvLSTM is the strongest global model, with validation exact accuracy of 0.6538, plus-or-minus-one accuracy of 0.8357, and level MAE of 0.6301. GConvGRU remains strongest on high-congestion levels 3 and 4 among the latest three-model comparison, while TGCN shows the largest improvement relative to its previous version, driven primarily by lower congestion levels.
+
+\begin{table}[htbp]
+\centering
+\caption{Current offline validation reading from the latest completed comparison line.}
+\begin{tabular}{|p{0.20\textwidth}|p{0.30\textwidth}|p{0.38\textwidth}|}
+\hline
+\textbf{Model family} & \textbf{Current reading} & \textbf{Interpretation} \\
+\hline
+GConvLSTM & Best global validation metrics & Exact accuracy 0.6538, $\pm 1$ accuracy 0.8357, level MAE 0.6301 \\
+\hline
+GConvGRU & Strongest on levels 3 and 4 & Most relevant current candidate for high-congestion behavior \\
+\hline
+TGCN & Largest improvement vs. previous line & Improvement appears driven mainly by lower congestion levels \\
+\hline
+\end{tabular}
+\end{table}
+
+These results suggest that the model-family decision is not a simple global-metric ranking problem. GConvLSTM is the most attractive model when the objective is aggregate validation performance, but GConvGRU remains important because the operational value of the system depends heavily on behavior during non-trivial congestion. TGCN is useful as a compact comparison point and as evidence that the newer training line can materially change model behavior, even when improvements are concentrated in lower levels.
+
+\subsection{Dense Real-Time Evaluation}
+
+Real-time evaluation is now active against dense prediction surfaces produced by the sibling inference system. Dense evaluation interprets missing Waze jams as level 0 and compares the full prediction surface rather than only observed jam records. A stable partial summary over 10 prediction files reports MAE of 1.7331, RMSE of 1.9473, bias of 1.6535, exact accuracy of 0.1897, and plus-or-minus-one accuracy of 0.3351.
+
+\begin{table}[htbp]
+\centering
+\caption{Partial dense real-time evaluation over 10 prediction files.}
+\begin{tabular}{|p{0.35\textwidth}|p{0.25\textwidth}|}
+\hline
+\textbf{Metric} & \textbf{Value} \\
+\hline
+MAE & 1.7331 \\
+\hline
+RMSE & 1.9473 \\
+\hline
+Bias & 1.6535 \\
+\hline
+Exact accuracy & 0.1897 \\
+\hline
+$\pm 1$ accuracy & 0.3351 \\
+\hline
+\end{tabular}
+\end{table}
+
+These values are not directly comparable to sparse validation metrics because they evaluate a denser and more operationally honest surface. The current pattern is that low congestion levels are overpredicted, levels 3 and 4 are underpredicted, and the model nevertheless shows useful signal in levels 2 and 3 under dense evaluation. This is an important distinction: the system has learned meaningful congestion structure, but the current deployed prediction surface still requires calibration and stronger validation before it can support final claims about operational accuracy.
+
+\subsection{Interpretation}
+
+The combined evidence points to a system that is technically mature enough for structured experimentation but not yet complete enough for final deployment-grade reporting. The sparse validation results show that the ST-GNN training pipeline can learn the historical target distribution with useful accuracy. The dense real-time results reveal a harder operational reality, in which the model must make predictions over many road-time pairs where explicit jam observations are absent. Under that denser evaluation surface, the model currently tends to overpredict low levels while still missing some severe events.
+
+This gap between offline and dense evaluation is not a contradiction; it is a diagnostic result. It indicates that the next stage of work should focus on calibration, per-level behavior, and traceable inference artifacts rather than only on reducing aggregate training loss. In particular, the high-congestion behavior of GConvGRU, the global strength of GConvLSTM, and the improvement pattern of TGCN should be compared using a completed dense evaluation window before selecting a final operational model.
+
+\section{Deployment, Traceability, and Operational Constraints}
+
+The training repository and the production inference repository share core modeling concepts but are not identical codebases. The training repository is responsible for preprocessing, sparse historical datasets, SageMaker training, model comparison, and offline evaluation. The inference repository is responsible for real-time data ingestion, Redis integration, GPU-oriented seed batching, prediction reconstruction, and storage of prediction outputs. This separation is appropriate because training and serving have different performance and data-availability constraints, but it also creates explicit parity responsibilities.
+
+The most important operational distinction is the difference between Redis prediction outputs and S3 prediction backups. The main Redis prediction key is filtered to emphasize predictions with meaningful congestion levels, while the S3 backup is intended to contain the full unfiltered prediction surface. For dense retrospective evaluation, the S3 backup is therefore the correct source, because evaluating only filtered Redis outputs would bias the results toward higher predicted congestion.
+
+Traceability remains a practical limitation. The inference runtime constructs metadata such as model file, model hash, model version, and model configuration in memory, and some of this metadata is persisted to Redis payloads. However, S3 parquet backups do not currently persist durable model identity metadata. In addition, training checkpoints do not yet store a stable run identity such as run id, SageMaker training job name, model artifact source, or explicit version. This means that retrospective evaluation can be technically correct at the prediction-file level while still being weaker than desired for model lineage and auditability.
+
+\section{Limitations and Next Steps}
+
+Several limitations remain before the paper can present final deployment-grade claims. The last-seven-day dense evaluation is still incomplete, so the current dense metrics should be interpreted as a stable partial snapshot rather than as final production evidence. The new seed-time planner and sampler also need more targeted unit tests and richer observability, including realized bucket counts per epoch, explicit plan size, and explicit shape-loss component metrics.
+
+The next experimental priority is to complete the larger dense evaluation over the full last-seven-day prediction set and summarize metrics globally, by true congestion level, and by forecast step. This should be followed by a calibration decision: either recalibrate the current best model line, retrain with further loss and sampling adjustments, or pursue both paths in parallel. Because the current dense evaluation shows overprediction at low levels and underprediction at high levels, calibration should be evaluated not only by global MAE but also by false positives for level 0 and recall-like behavior for levels 3 and 4.
+
+The next engineering priority is to improve traceability. S3 prediction backups should persist model identity fields such as \texttt{model\_version}, \texttt{model\_md5}, \texttt{training\_job\_name}, \texttt{model\_artifact\_s3}, and inference code version. Training checkpoints should likewise save durable identity fields so that the inference system can resolve a model version without relying on informal artifact names. These changes would make future evaluation tables more defensible because every prediction file could be linked to a specific training run and model artifact.
 
 % --- Bibliography ---
 \bibliographystyle{ieeetr}

@@ -4,7 +4,7 @@ from typing import Optional
 import pandas as pd
 import torch
 
-from sparse_dataloader import TrafficDataset
+from src.sparse_dataloader import TrafficDataset
 
 
 def reconstruct_predictions(

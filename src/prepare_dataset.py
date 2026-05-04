@@ -525,7 +525,7 @@ def run_dataset_instantiation():
     print("STEP 4: DATASET INSTANTIATION")
     print("=" * 80)
 
-    from sparse_dataloader import TrafficDataset
+    from src.sparse_dataloader import TrafficDataset
 
     processed_data_dir = "data/datos_procesados"
     sparse_data_dir = f"{processed_data_dir}/sparse_datasets"

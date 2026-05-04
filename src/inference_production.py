@@ -16,8 +16,9 @@ import pickle
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
+import networkx as nx
 import pandas as pd
 import torch
 from tqdm import tqdm
@@ -157,118 +158,6 @@ class InferencePipeline:
             logger.error(f"Failed to load model: {e}")
             raise
 
-    def reconstruct_predictions(
-        self,
-        predictions: list[torch.Tensor],
-        batches: list,
-        include_velocity: bool = True,
-    ) -> pd.DataFrame:
-        """
-        Reconstruct predictions from model output into a meaningful DataFrame.
-
-        Maps the raw prediction tensors back to their corresponding node IDs and
-        timestamps, creating a structured DataFrame suitable for analysis and
-        downstream applications.
-
-        Args:
-            predictions: List of prediction tensors, one per batch.
-                Each tensor has shape (1, num_nodes, out_timesteps) or
-                (1, num_nodes, out_timesteps, 2) if include_velocity=True.
-            batches: List of PyTorch Geometric Data objects from the inference loader.
-                Each batch contains metadata: node_ids, future_timestamps.
-            include_velocity: Whether predictions include velocity (affects output columns).
-                If True, expects predictions with 2 features (jam_level, velocity).
-                If False, expects predictions with only jam_level.
-
-        Returns:
-            pd.DataFrame: DataFrame with columns:
-                - NodeID: Road segment identifier
-                - Timestamp: Prediction timestamp
-                - predicted_jam_level: Predicted jam level (0-5 scale)
-                - predicted_velocity: Predicted velocity in km/h (if include_velocity=True)
-
-        Example:
-            >>> results = pipeline.predict(...)
-            >>> df = pipeline.reconstruct_predictions(
-            ...     results["predictions"],
-            ...     results["batches"],
-            ...     include_velocity=True
-            ... )
-            >>> print(df.head())
-                                              predicted_jam_level  predicted_velocity
-            NodeID     Timestamp
-            road_12345 2025-01-27 10:15:00                   2.3               45.2
-            road_12345 2025-01-27 10:30:00                   2.1               48.1
-        """
-        logger.info("Reconstructing predictions to DataFrame...")
-
-        all_records = []
-
-        for batch_idx, (pred_tensor, batch) in enumerate(zip(predictions, batches)):
-            logger.debug(f"Processing batch {batch_idx + 1}/{len(batches)}")
-
-            # Get batch metadata
-            node_ids = batch.node_ids  # List of node ID strings
-            future_timestamps = batch.future_timestamps  # DatetimeIndex
-
-            if future_timestamps is None:
-                logger.warning(
-                    f"Batch {batch_idx} missing timestamp metadata, skipping"
-                )
-                continue
-
-            # Convert tensor to numpy for processing
-            # pred_tensor shape: (1, num_nodes, out_timesteps) or
-            #                    (1, num_nodes, out_timesteps, 2)
-            pred_np = pred_tensor.squeeze(0).cpu().numpy()
-
-            num_nodes = pred_np.shape[0]
-            num_timesteps = pred_np.shape[1]
-
-            # Process each node and timestep
-            for node_idx in range(num_nodes):
-                node_id = node_ids[node_idx]
-
-                for t_idx in range(num_timesteps):
-                    if t_idx >= len(future_timestamps):
-                        break
-
-                    timestamp = future_timestamps[t_idx]
-
-                    record = {
-                        "NodeID": node_id,
-                        "Timestamp": timestamp,
-                    }
-
-                    if include_velocity and pred_np.ndim == 3 and pred_np.shape[2] == 2:
-                        # Predictions have shape (num_nodes, out_timesteps, 2)
-                        record["predicted_jam_level"] = float(
-                            pred_np[node_idx, t_idx, 0]
-                        )
-                        record["predicted_velocity"] = float(
-                            pred_np[node_idx, t_idx, 1]
-                        )
-                    else:
-                        # Predictions have shape (num_nodes, out_timesteps)
-                        record["predicted_jam_level"] = float(pred_np[node_idx, t_idx])
-
-                    all_records.append(record)
-
-        # Create DataFrame
-        df = pd.DataFrame(all_records)
-
-        if not df.empty:
-            df = df.set_index(["NodeID", "Timestamp"]).sort_index()
-            logger.info(
-                f"Reconstructed {len(df)} predictions for "
-                f"{df.index.get_level_values('NodeID').nunique()} nodes and "
-                f"{df.index.get_level_values('Timestamp').nunique()} timestamps"
-            )
-        else:
-            logger.warning("No predictions were reconstructed")
-
-        return df
-
     def predict(
         self,
         jams_path: str,
@@ -280,6 +169,8 @@ class InferencePipeline:
         incidents_path: str,
         output_path: Optional[str] = None,
         expected_feature_map_path: Optional[str] = None,
+        max_hops: Optional[int] = None,
+        node_seeds: Optional[list[str]] = None,
     ) -> dict:
         """
         Run inference on provided data.
@@ -291,6 +182,13 @@ class InferencePipeline:
         logger.info("Starting inference...")
 
         try:
+            if isinstance(node_seeds, dict) and "seeds" in node_seeds:
+                node_seeds = node_seeds["seeds"]
+            elif isinstance(node_seeds, str):
+                node_seeds = [node_seeds]
+            if node_seeds is not None:
+                logger.info("Using %s seed(s) for inference", len(node_seeds))
+
             # Update expected feature map if provided per-call
             if expected_feature_map_path and Path(expected_feature_map_path).exists():
                 with open(expected_feature_map_path, "r") as f:
@@ -308,6 +206,7 @@ class InferencePipeline:
                 pmt_tramos_path=pmt_tramos_path,
                 events_path=events_path,
                 incidents_path=incidents_path,
+                node_seeds=node_seeds,
             )
 
             load_time = time.time() - load_start
@@ -325,15 +224,13 @@ class InferencePipeline:
 
             # Run model inference if model is available
             predictions = None
-            predictions_denorm = None
-            inference_time = None
-
             if self.model is not None:
                 logger.info("Running model inference...")
                 inference_start = time.time()
 
                 predictions = []
                 predictions_denorm = []
+                predictions_filtered = []
                 with torch.no_grad():
                     for i, batch in enumerate(tqdm(batches, desc="Inference batches")):
                         logger.debug(f"Processing batch {i + 1}/{len(batches)}")
@@ -393,40 +290,42 @@ class InferencePipeline:
                         predictions.append(pred)
                         predictions_denorm.append(pred_denorm)
 
+                        if max_hops is not None:
+                            hop_counts = self._compute_hop_counts(
+                                getattr(batch, "seed_node", None),
+                                getattr(batch, "node_ids", None),
+                                max_hops,
+                            )
+                            predictions_filtered.extend(
+                                self._filter_predictions_by_hops(
+                                    pred_denorm, batch, hop_counts, max_hops
+                                )
+                            )
+
                 inference_time = time.time() - inference_start
                 logger.info(f"Inference completed in {inference_time:.2f}s")
 
             # Prepare results
             total_time = time.time() - start_time
 
-            # Reconstruct predictions to DataFrame if available
-            predictions_df = None
-            if predictions_denorm:
-                predictions_df = self.reconstruct_predictions(
-                    predictions_denorm, batches, include_velocity=True
-                )
-
             results = {
                 "timestamp": datetime.now().isoformat(),
                 "num_batches": len(batches),
                 "num_nodes": batches[0].num_nodes if batches else 0,
                 "load_time": load_time,
-                "inference_time": inference_time,
+                "inference_time": locals().get("inference_time", None),
                 "total_time": total_time,
                 "predictions_normalized": predictions,
-                "predictions": predictions_denorm
-                if predictions_denorm
-                else predictions,
-                "predictions_df": predictions_df,  # Reconstructed DataFrame
-                "batches": batches,  # Include batches for custom reconstruction
+                "predictions": locals().get("predictions_denorm", predictions),
                 "normalization_constants": self.target_norm_constants,
             }
 
+            if max_hops is not None:
+                results["predictions_df"] = pd.DataFrame(predictions_filtered)
+
             # Save results if output path provided (saves de-normalized predictions)
             if output_path and results["predictions"]:
-                self._save_predictions(
-                    results["predictions"], output_path, predictions_df
-                )
+                self._save_predictions(results["predictions"], output_path)
 
             logger.info(f"Inference completed successfully in {total_time:.2f}s")
             return results
@@ -435,22 +334,8 @@ class InferencePipeline:
             logger.error(f"Inference failed: {e}", exc_info=True)
             raise
 
-    def _save_predictions(
-        self,
-        predictions: list[torch.Tensor],
-        output_path: str,
-        predictions_df: Optional[pd.DataFrame] = None,
-    ):
-        """
-        Save predictions to file.
-
-        Saves both raw numpy arrays and the reconstructed DataFrame (if available).
-
-        Args:
-            predictions: List of prediction tensors.
-            output_path: Base output path (will add .npy for arrays, .parquet for DataFrame).
-            predictions_df: Optional reconstructed DataFrame with NodeID/Timestamp index.
-        """
+    def _save_predictions(self, predictions, output_path: str):
+        """Save predictions to file."""
         logger.info(f"Saving predictions to {output_path}")
         try:
             # Convert to numpy and save
@@ -463,19 +348,58 @@ class InferencePipeline:
             import numpy as np
 
             np.save(output_path, pred_array)
-            logger.info(f"Raw predictions saved: {pred_array.shape}")
 
-            # Save DataFrame as parquet if available
-            if predictions_df is not None and not predictions_df.empty:
-                # Replace .npy extension with .parquet if present
-                df_output_path = (
-                    str(output_path).replace(".npy", "") + "_reconstructed.parquet"
-                )
-                predictions_df.to_parquet(df_output_path)
-                logger.info(f"Reconstructed predictions saved to {df_output_path}")
+            logger.info(f"Predictions saved: {pred_array.shape}")
 
         except Exception as e:
             logger.error(f"Failed to save predictions: {e}")
+
+    def _compute_hop_counts(
+        self,
+        seed_node: Optional[str],
+        node_ids: Optional[list[str]],
+        max_hops: int,
+    ) -> dict[str, int]:
+        if seed_node is None or node_ids is None:
+            return {}
+        hop_counts = nx.single_source_shortest_path_length(
+            self.loader.graph, seed_node, cutoff=max_hops
+        )
+        return {n: hop_counts[n] for n in node_ids if n in hop_counts}
+
+    def _filter_predictions_by_hops(
+        self,
+        pred: torch.Tensor,
+        batch,
+        hop_counts: dict[str, int],
+        max_hops: int,
+    ) -> list[dict]:
+        pred_cpu = pred.detach().cpu()  # (1, N, T, 2)
+        if pred_cpu.dim() != 4:
+            raise ValueError(f"Expected pred to be 4D, got {pred_cpu.shape}")
+        _, num_nodes, horizon, _ = pred_cpu.shape
+        rows = []
+        seed_node = getattr(batch, "seed_node", None)
+        node_ids = getattr(batch, "node_ids", None) or []
+        for idx in range(num_nodes):
+            node_id = node_ids[idx] if idx < len(node_ids) else None
+            if node_id is None:
+                continue
+            hop = hop_counts.get(node_id)
+            if hop is None or hop > max_hops:
+                continue
+            for t in range(horizon):
+                rows.append(
+                    {
+                        "seed_node": seed_node,
+                        "node_id": node_id,
+                        "hop": hop,
+                        "t_idx": t,
+                        "pred_level": float(pred_cpu[0, idx, t, 0]),
+                        "pred_speed": float(pred_cpu[0, idx, t, 1]),
+                    }
+                )
+        return rows
 
     def batch_predict(
         self,

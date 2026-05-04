@@ -1,8 +1,11 @@
 import math
 import re
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Optional
 
+import boto3
 import numpy as np
 import pandas as pd
 import torch
@@ -54,6 +57,14 @@ def pad_collate(batch):
         out["x_dynamic_future"] = torch.stack(
             [d.x_dynamic_future for d in batch], dim=0
         )  # (B, N, Tout, F_future)
+        if hasattr(batch[0], "x_temporal_past"):
+            out["x_temporal_past"] = torch.stack(
+                [d.x_temporal_past for d in batch], dim=0
+            )
+        if hasattr(batch[0], "x_temporal_future"):
+            out["x_temporal_future"] = torch.stack(
+                [d.x_temporal_future for d in batch], dim=0
+            )
     elif has_single:
         out["x_dynamic"] = torch.stack(
             [d.x_dynamic for d in batch], dim=0
@@ -72,6 +83,30 @@ def pad_collate(batch):
         x_weather = torch.stack(
             [d.x_weather for d in batch], dim=0
         )  # (B, N, Tin, F_weather)
+        if x_weather.dim() != out["x_dynamic_past"].dim():
+            raise ValueError(
+                "x_weather rank does not match x_dynamic_past rank: "
+                f"{tuple(x_weather.shape)} vs {tuple(out['x_dynamic_past'].shape)}"
+            )
+        if x_weather.shape[:3] != out["x_dynamic_past"].shape[:3]:
+            # Some paths may produce a singleton node dimension for weather. Expand it
+            # if and only if the mismatch is exactly N=1 -> N=target.
+            if (
+                x_weather.shape[0] == out["x_dynamic_past"].shape[0]
+                and x_weather.shape[1] == 1
+                and x_weather.shape[2] == out["x_dynamic_past"].shape[2]
+            ):
+                x_weather = x_weather.expand(
+                    x_weather.shape[0],
+                    out["x_dynamic_past"].shape[1],
+                    x_weather.shape[2],
+                    x_weather.shape[3],
+                )
+            else:
+                raise ValueError(
+                    "x_weather shape is incompatible with x_dynamic_past before concat: "
+                    f"{tuple(x_weather.shape)} vs {tuple(out['x_dynamic_past'].shape)}"
+                )
         out["x_dynamic_past"] = torch.cat(
             [out["x_dynamic_past"], x_weather], dim=-1
         )
@@ -140,6 +175,200 @@ class SeededBatchSampler:
 
     def __len__(self) -> int:
         return self._num_batches
+
+
+@dataclass
+class SeedTimeEpochPlan:
+    seed_list: list[str]
+    batch_time_indices: list[list[int]]
+    requested_bucket_counts: dict[str, int]
+    realized_bucket_counts: dict[str, int]
+
+    @property
+    def num_batches(self) -> int:
+        return len(self.batch_time_indices)
+
+    @property
+    def num_samples(self) -> int:
+        return sum(len(batch) for batch in self.batch_time_indices)
+
+
+def _materialize_parquet_path(path_or_uri: str | Path) -> Path:
+    raw = str(path_or_uri)
+    if not raw.startswith("s3://"):
+        return Path(raw)
+
+    bucket_and_key = raw[len("s3://") :]
+    bucket, key = bucket_and_key.split("/", 1)
+    local_dir = Path(tempfile.gettempdir()) / "congestion_bogota_training_artifacts"
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_path = local_dir / Path(key).name
+    boto3.client("s3").download_file(bucket, key, str(local_path))
+    return local_path
+
+
+def _normalize_bucket_ratios(raw: str | dict[str, float] | tuple[float, float, float]) -> dict[str, float]:
+    if isinstance(raw, dict):
+        ratios = {
+            "high": float(raw["high"]),
+            "medium": float(raw["medium"]),
+            "low": float(raw["low"]),
+        }
+    elif isinstance(raw, tuple):
+        ratios = {"high": float(raw[0]), "medium": float(raw[1]), "low": float(raw[2])}
+    else:
+        values = [float(v.strip()) for v in str(raw).split(",") if v.strip()]
+        if len(values) != 3:
+            raise ValueError("seed_time_bucket_target_ratios must contain exactly 3 comma-separated values")
+        ratios = {"high": values[0], "medium": values[1], "low": values[2]}
+
+    total = sum(ratios.values())
+    if total <= 0:
+        raise ValueError("Bucket ratios must sum to a positive value")
+    return {k: v / total for k, v in ratios.items()}
+
+
+def _allocate_bucket_counts(batch_size: int, ratios: dict[str, float]) -> dict[str, int]:
+    exact = {bucket: ratios[bucket] * batch_size for bucket in ("high", "medium", "low")}
+    counts = {bucket: int(math.floor(value)) for bucket, value in exact.items()}
+    remainder = batch_size - sum(counts.values())
+    ranked = sorted(
+        ((bucket, exact[bucket] - counts[bucket]) for bucket in counts),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    for bucket, _ in ranked[:remainder]:
+        counts[bucket] += 1
+    return counts
+
+
+def _sample_time_indices_for_seed(
+    rng: np.random.Generator,
+    per_bucket: dict[str, np.ndarray],
+    requested_counts: dict[str, int],
+) -> tuple[list[int], dict[str, int]]:
+    realized_counts = {"high": 0, "medium": 0, "low": 0}
+    selected: list[int] = []
+
+    all_times = np.concatenate([arr for arr in per_bucket.values() if len(arr) > 0])
+    if len(all_times) == 0:
+        raise ValueError("Seed has no available time_idx rows in artifact")
+
+    for bucket in ("high", "medium", "low"):
+        need = int(requested_counts[bucket])
+        if need <= 0:
+            continue
+        arr = per_bucket.get(bucket)
+        if arr is not None and len(arr) > 0:
+            replace = len(arr) < need
+            picks = rng.choice(arr, size=need, replace=replace).tolist()
+            selected.extend(int(x) for x in picks)
+            realized_counts[bucket] += need
+        else:
+            fallback = rng.choice(all_times, size=need, replace=len(all_times) < need).tolist()
+            selected.extend(int(x) for x in fallback)
+
+    rng.shuffle(selected)
+    return selected, realized_counts
+
+
+class SeedTimeEpochPlanner:
+    """
+    Builds epoch plans where each batch uses a single seed and multiple time_idx.
+
+    The heavy work is done once when loading the precomputed artifact. Per epoch we only
+    shuffle seeds and sample time_idx from cached numpy arrays, which keeps loader overhead low.
+    """
+
+    def __init__(
+        self,
+        artifact_path: str | Path,
+        batch_size: int,
+        bucket_target_ratios: str | dict[str, float] | tuple[float, float, float] = "0.45,0.30,0.25",
+        rng_seed: int = 42,
+        allowed_seeds: Optional[Iterable[str]] = None,
+    ) -> None:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be > 0")
+        self.batch_size = int(batch_size)
+        self.rng = np.random.default_rng(rng_seed)
+        self.bucket_target_ratios = _normalize_bucket_ratios(bucket_target_ratios)
+        self.batch_bucket_counts = _allocate_bucket_counts(self.batch_size, self.bucket_target_ratios)
+
+        rows = pd.read_parquet(_materialize_parquet_path(artifact_path))
+        required = {"seed_id", "time_idx", "bucket"}
+        missing = required - set(rows.columns)
+        if missing:
+            raise ValueError(f"Seed-time artifact is missing columns: {sorted(missing)}")
+
+        rows = rows[["seed_id", "time_idx", "bucket"]].copy()
+        rows["seed_id"] = rows["seed_id"].astype(str)
+        rows["time_idx"] = rows["time_idx"].astype(int)
+        rows["bucket"] = rows["bucket"].astype(str)
+        if allowed_seeds is not None:
+            allowed = {str(seed) for seed in allowed_seeds}
+            rows = rows[rows["seed_id"].isin(allowed)].copy()
+        if rows.empty:
+            raise ValueError("Seed-time artifact is empty after filtering")
+
+        self.seed_ids = list(dict.fromkeys(rows["seed_id"].tolist()))
+        self.by_seed_bucket: dict[str, dict[str, np.ndarray]] = {}
+        for seed_id, seed_df in rows.groupby("seed_id"):
+            self.by_seed_bucket[seed_id] = {}
+            for bucket in ("high", "medium", "low"):
+                arr = seed_df.loc[seed_df["bucket"] == bucket, "time_idx"].to_numpy(dtype=np.int64)
+                self.by_seed_bucket[seed_id][bucket] = arr
+
+    def build_epoch_plan(self, seed_cycles: int = 1, shuffle_seeds: bool = True) -> SeedTimeEpochPlan:
+        if seed_cycles <= 0:
+            raise ValueError("seed_cycles must be > 0")
+        epoch_seeds: list[str] = []
+        for _ in range(int(seed_cycles)):
+            cycle = list(self.seed_ids)
+            if shuffle_seeds:
+                self.rng.shuffle(cycle)
+            epoch_seeds.extend(cycle)
+
+        batch_time_indices: list[list[int]] = []
+        realized = {"high": 0, "medium": 0, "low": 0}
+        for seed_id in epoch_seeds:
+            batch_times, realized_counts = _sample_time_indices_for_seed(
+                rng=self.rng,
+                per_bucket=self.by_seed_bucket[seed_id],
+                requested_counts=self.batch_bucket_counts,
+            )
+            batch_time_indices.append(batch_times)
+            for bucket, value in realized_counts.items():
+                realized[bucket] += int(value)
+
+        requested = {
+            bucket: int(count * len(epoch_seeds))
+            for bucket, count in self.batch_bucket_counts.items()
+        }
+        return SeedTimeEpochPlan(
+            seed_list=epoch_seeds,
+            batch_time_indices=batch_time_indices,
+            requested_bucket_counts=requested,
+            realized_bucket_counts=realized,
+        )
+
+
+class PlannedSeedTimeBatchSampler:
+    def __init__(self, batch_time_indices: list[list[int]], num_time_windows: int) -> None:
+        if num_time_windows <= 0:
+            raise ValueError("num_time_windows must be > 0")
+        if not batch_time_indices:
+            raise ValueError("batch_time_indices must not be empty")
+        self.batch_time_indices = [[int(x) for x in batch] for batch in batch_time_indices]
+        self.num_time_windows = int(num_time_windows)
+
+    def __iter__(self):
+        for batch_idx, batch_times in enumerate(self.batch_time_indices):
+            seed_offset = batch_idx * self.num_time_windows
+            yield [seed_offset + int(time_idx) for time_idx in batch_times]
+
+    def __len__(self) -> int:
+        return len(self.batch_time_indices)
 
 
 @dataclass
