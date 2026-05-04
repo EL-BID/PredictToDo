@@ -242,7 +242,7 @@ With a batch size of 16 and one epoch cycle, the intended combined-artifact plan
 
 \subsection{Rationale}
 
-The main advantage of this approach is that it improves the training signal without redesigning the dataset materialization path. The expensive and performance-sensitive part of the system, \texttt{TrafficDataset.__getitem__()}, continues to receive standard integer indices and to construct tensors through the existing sparse HDF5 contract. The sampling innovation is isolated in the planning layer. This separation reduces implementation risk, preserves graph consistency, and makes the sampling strategy auditable through the artifact metadata.
+The main advantage of this approach is that it improves the training signal without redesigning the dataset materialization path. The expensive and performance-sensitive part of the system, \texttt{TrafficDataset.\_\_getitem\_\_()}, continues to receive standard integer indices and to construct tensors through the existing sparse HDF5 contract. The sampling innovation is isolated in the planning layer. This separation reduces implementation risk, preserves graph consistency, and makes the sampling strategy auditable through the artifact metadata.
 
 \section{Model Architecture and Training Infrastructure}
 
