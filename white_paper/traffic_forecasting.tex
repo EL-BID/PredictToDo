@@ -428,9 +428,9 @@ Primary runtime & AWS SageMaker with EFS and S3 artifacts \\
 
 \subsection{Offline Validation Results}
 
-% TODO: Strongest-claim language without comparable numbers. List the corresponding metrics for GConvGRU and TGCN in the same paragraph (exact accuracy, ±1 accuracy, level MAE) so the reader can see the gap rather than infer it. Also state whether the four-decimal precision (0.6538, 0.8357, 0.6301) reflects single-seed runs; if so, say so explicitly so the reader does not over-interpret a ~0.01 gap between models.
 The latest completed SageMaker comparison line uses the 2026-04-20 shape-loss runs for GConvLSTM, GConvGRU, and TGCN. In this validation line, GConvLSTM is the strongest global model, with validation exact accuracy of 0.6538, plus-or-minus-one accuracy of 0.8357, and level MAE of 0.6301. GConvGRU remains strongest on high-congestion levels 3 and 4 among the latest three-model comparison, while TGCN shows the largest improvement relative to its previous version, driven primarily by lower congestion levels.
 
+% TODO: The corresponding metrics for GConvGRU and TGCN (exact accuracy, ±1 accuracy, level MAE) should also be listed so the reader can see the gap between the models. Currently the table only lists the global metrics for GConvLSTM, and the rest of the interpretation is qualitative. Providing the actual numbers for all three models would allow for a more precise and quantitative interpretation of their relative performance.
 \begin{table}[htbp]
 \centering
 \caption{Current offline validation reading from the latest completed comparison line.}
@@ -451,7 +451,7 @@ These results suggest that the model-family decision is not a simple global-metr
 
 \subsection{Dense Real-Time Evaluation}
 
-% TODO: "10 prediction files" is unanchored. State the calendar window the 10 files cover, the number of seeds and forecast steps per file, and the total prediction count being evaluated. Also state the sign convention for "bias" explicitly (e.g. predicted minus actual, so a positive bias of 1.6535 means systematic overprediction).
+% TODO: "10 prediction files" is very vague. What does it mean? What is each file? What dates, how many seeds? Also the the sign for "bias" should be stated explicitly (e.g. "y_pred - y_true", so a positive bias of 1.6535 which means systematic overprediction should be written as +1.6535, not just 1.6535, to avoid ambiguity). How are MAE, RMSE and the accuracies measured? Are they measured at the jam level, or at the mean jam velocity, or some other target? Providing more precise definitions of the evaluation setup and metrics would allow for a clearer interpretation of the results and their implications for model performance in real-time deployment.
 Real-time evaluation is now active against dense prediction surfaces produced by the sibling inference system. Dense evaluation interprets missing Waze jams as level 0 and compares the full prediction surface rather than only observed jam records. A stable partial summary over 10 prediction files reports MAE of 1.7331, RMSE of 1.9473, bias of 1.6535, exact accuracy of 0.1897, and plus-or-minus-one accuracy of 0.3351.
 
 \begin{table}[htbp]
