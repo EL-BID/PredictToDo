@@ -92,7 +92,7 @@ where \(\tilde{A} = A + I\) is the adjacency matrix with added self-loops, \(\ti
 In traffic prediction, the goal is to capture both spatial patterns (graph structure) and temporal dynamics (time series). This led to the development of Spatio-Temporal GNNs, which combine GCNs with temporal models like RNNs or attention mechanisms to effectively model the complex dependencies in traffic networks.
 
 \subsubsection{Recurrent-Based Approaches}
-A prominent direction in ST-GNNs involves integrating graph convolution operations into recurrent neural network (RNN) cells. Seo et al.~\cite{seo_gcrn} introduced the Graph Convolutional Recurrent Network, which incorporates the Chebyshev spectral graph convolution operator directly into the input-to-state and state-to-state transitions of LSTM and GRU cells. These models, referred to as \textbf{GConvLSTM} and \textbf{GConvGRU}, are capable of learning spatial structures that evolve over time. The key idea is to replace the standard matrix multiplication in RNNs with graph convolution operations, enabling the model to capture the topological relationships inherent in the road network. Mathematically, the state update for a GConvGRU can be expressed as:
+A prominent direction in ST-GNNs involves integrating graph convolution operations into recurrent neural network (RNN) cells. Seo et al.~\cite{seo_gcrn} introduced the Graph Convolutional Recurrent Network, which incorporates the graph convolution operator directly into the input-to-state and state-to-state transitions of LSTM and GRU cells. These models, referred to as \textbf{GConvLSTM} and \textbf{GConvGRU}, are capable of learning spatial structures that evolve over time. The key idea is to replace the standard matrix multiplication in RNNs with graph convolution operations, enabling the model to capture the topological relationships inherent in the road network. Mathematically, the state update for a GConvGRU can be expressed as:
 % \begin{equation}
 %   h_t = \sigma\left(W_h \cdot \text{GCN}(A, h_{t-1}) + W_x \cdot x_t + b\right),
 % \end{equation}
@@ -102,20 +102,20 @@ A prominent direction in ST-GNNs involves integrating graph convolution operatio
   \tilde{h}_t &= \tanh(\mathrm{GCN}(A,[x_t,r_t \odot h_{t-1}];W_h)), \\
   h_t &= (1 - z_t) \odot h_{t-1} + z_t \odot \tilde{h}_t,
 \end{align}
-where \( h_t \) is the hidden state at time \( t \), \( x_t \) is the input at time \( t \), \( A \) is the adjacency matrix of the graph, \( W_h \) and \( W_x \) are learnable weight matrices, \( b \) is the bias term, and \( \sigma \) is a non-linear activation function.
+where \( h_t \) is the hidden state at time \( t \), \( x_t \) is the input at time \( t \), \( A \) is the adjacency matrix of the graph, \( z_t \) and \( r_t \) are the update and reset gates, \( \tilde{h}_t \) is the candidate hidden state, \( W_z, W_r, W_h \) are learnable parameters of the graph convolutions, \( \odot \) denotes the element-wise product, and \( \sigma \) is a non-linear activation function.
 
-Similarly, Zhao et al.~\cite{zhao_tgcn} proposed the Temporal Graph Convolutional Network (\textbf{TGCN}), which combines a Graph Convolutional Network (GCN) for spatial feature extraction with a GRU for temporal modeling. The GCN captures the topological relationships of the road network, while the GRU models the dynamic changes in traffic data over time. The TGCN can be expressed as:
+Similarly, Zhao et al.~\cite{zhao_tgcn} proposed the Temporal Graph Convolutional Network (\textbf{TGCN}), which combines a Graph Convolutional Network (GCN) for spatial feature extraction with a GRU for temporal modeling. The GCN captures the topological relationships of the road network, while the GRU models the dynamic changes in traffic data over time. As a schematic single-layer summary, the spatial encoder can be written as
 \begin{equation}
   H^{(l+1)} = \sigma\left(\tilde{D}^{-1/2} \tilde{A} \tilde{D}^{-1/2} H^{(l)} W^{(l)} + b^{(l)}\right),
 \end{equation}
-where \( H^{(l)} \) represents the node embeddings at layer \( l \), \( W^{(l)} \) is the weight matrix, and \( b^{(l)} \) is the bias term. The temporal dynamics are then modeled using a GRU:
+where \( H^{(l)} \) represents the node embeddings at layer \( l \), \( W^{(l)} \) is the weight matrix, and \( b^{(l)} \) is the bias term. The temporal dynamics are then modelled by integrating this spatial encoder into a gated recurrent cell. We adopt the formulation used in \texttt{torch\_geometric\_temporal.nn.recurrent.TGCN}, in which a separate graph convolution feeds each gate and the previous hidden state is concatenated before a linear projection:
 \begin{align}
-  z_t &= \sigma(W_z x_t + U_z h_{t-1} + b_z), \\
-  r_t &= \sigma(W_r x_t + U_r h_{t-1} + b_r), \\
-  \tilde{h}_t &= \tanh(W_h x_t + r_t \odot (U_h h_{t-1}) + b_h), \\
-  h_t &= (1 - z_t) \odot h_{t-1} + z_t \odot \tilde{h}_t,
+  z_t &= \sigma\bigl(W_z\,[\,\mathrm{GCN}_z(x_t, A),\,h_{t-1}\,] + b_z\bigr), \\
+  r_t &= \sigma\bigl(W_r\,[\,\mathrm{GCN}_r(x_t, A),\,h_{t-1}\,] + b_r\bigr), \\
+  \tilde{h}_t &= \tanh\bigl(W_h\,[\,\mathrm{GCN}_h(x_t, A),\,r_t \odot h_{t-1}\,] + b_h\bigr), \\
+  h_t &= z_t \odot h_{t-1} + (1 - z_t) \odot \tilde{h}_t,
 \end{align}
-where \( z_t \) and \( r_t \) are the update and reset gates, respectively, and \( \odot \) denotes the element-wise product.
+where \( z_t \) and \( r_t \) are the update and reset gates, $\tilde{h}_t$ is the candidate hidden state, $[\cdot,\cdot]$ denotes column-wise concatenation, and \( \odot \) denotes the element-wise product. Note that the update-gate convention here weights the \emph{previous} hidden state by $z_t$, opposite to the Cho et al.\ GRU convention.
 
 \subsubsection{Attention-Based Approaches}
 While recurrent mechanisms are effective for capturing temporal dependencies, they may struggle with very long-term dependencies and can be computationally expensive. To address these limitations, attention mechanisms have been introduced. Attention mechanisms allow the model to dynamically weigh the importance of different time steps in the historical data, enabling it to focus on the most relevant temporal information.
@@ -142,7 +142,7 @@ Our approach leverages a diverse array of urban data sources to capture the mult
 \subsubsection{Primary Traffic Features}
 The core traffic data is derived from Waze's crowdsourced traffic jams dataset, providing real-time insights into congestion patterns across the city's road network. The \texttt{JamsProcessor} component extracts and spatially assigns traffic features to road segments through geometric matching. Traffic jams are mapped to specific road segments using a 4-meter buffer around each road's geometry, with overlap thresholds applied to refine the spatial join process.
 
-To align the temporal granularity of the raw jam data with the model's requirements, the data was aggregated into 15-minute intervals. This temporal resolution was chosen to balance the need for capturing traffic dynamics with the computational efficiency required for large-scale data processing. The aggregated data includes multiple features for each road segment and time window, such as congestion severity (i.e., \textit{jam level}), delay metrics, average speeds, and a count of severe congestion events (i.e., \textit{jam count}).. These features provide a multi-dimensional representation of traffic conditions, enabling the model to capture the complex dynamics of urban mobility.
+To align the temporal granularity of the raw jam data with the model's requirements, the data was aggregated into 15-minute intervals. This temporal resolution was chosen to balance the need for capturing traffic dynamics with the computational efficiency required for large-scale data processing. The aggregated data includes multiple features for each road segment and time window, such as congestion severity (i.e., \textit{jam level}), delay metrics, average speeds, and a count of severe congestion events (i.e., \textit{jam count}). These features provide a multi-dimensional representation of traffic conditions, enabling the model to capture the complex dynamics of urban mobility.
 
 Environmental and contextual factors, such as weather conditions, also play a significant role in influencing traffic patterns. To incorporate these factors, meteorological data from multiple weather stations was processed and integrated into the model. Key weather variables, including wind direction and speed, humidity, precipitation, and temperature, were collected and assigned to road segments based on their proximity to weather stations. A 15-meter buffer was used to ensure that each road segment received relevant environmental context. Furthermore, the weather data was temporally aligned with the traffic data using the same 15-minute resolution, ensuring consistency in the temporal representation of the dataset.
 
@@ -203,13 +203,13 @@ The \texttt{TrafficDataset} contract is the central runtime abstraction that con
 
 The most important constraint imposed by this dataset contract is graph consistency inside a batch. A training sample is not defined only by a timestamp; it is defined by a seed-local subgraph and a time window. All examples in a batch must therefore share one compatible \texttt{edge\_index}. The current implementation preserves this invariant by allowing the time index to vary inside a batch while keeping the seed fixed. In practical terms, each batch contains one seed-local road subnetwork and multiple historical windows drawn from that same subnetwork.
 
-This contract also determines how missing sparse values are interpreted. For traffic severity scoring and dense reconstruction, missing sparse entries represent the absence of an observed congestion signal and are treated as level 0 where appropriate. This convention is especially important for dense real-time evaluation, because failing to count missing traffic observations as zero would inflate the apparent prevalence of high-severity samples.
+This contract also determines how missing sparse values are interpreted. For traffic severity scoring and dense reconstruction, missing sparse entries represent the absence of an observed congestion signal and are treated as level 0. This convention is especially important for dense real-time evaluation, because failing to count missing traffic observations as zero would inflate the apparent prevalence of high-severity samples.
 
 \subsection{Missing Data Imputation Strategy}
 
-Urban traffic data often contains missing values due to various factors such as sensor failures, data transmission issues, and inconsistent data source coverage. To address this challenge, an intelligent imputation strategy was developed, leveraging the graph structure of the road network to handle missing data effectively. The imputation process primarily relied on neighbor-based methods, where missing values for critical features such as speed and delay were estimated using aggregated values from spatially neighboring road segments. This approach ensured that the imputed values were contextually relevant and reflective of the local traffic conditions.
+Urban traffic data often contains missing values due to factors such as sensor failures, data transmission issues, and inconsistent data source coverage. To address this challenge, a neighbour-based imputation strategy is implemented in \texttt{src/preprocessing/imputation.py} (\texttt{generate\_neighbor\_features\_from\_files}). For each road segment, the procedure first computes a per-segment time-average of the observed irregularity features \textit{trend} and \textit{regularSpeed}. It then walks the road graph and, for every node, extracts its $k$-hop ego subgraph (default $k=10$ hops, where hops are graph edges rather than metres). Within this neighbourhood, only nodes that (i) have an observed mean for the feature and (ii) share the same street type (\texttt{MVITIPO}) as the target node are retained, and the imputed value is the unweighted arithmetic mean of their per-segment averages.
 
-Different imputation methods were applied based on the characteristics of the missing features. For instance, temporal interpolation techniques were employed to estimate missing weather data, while spatial averaging was used for traffic metrics. This feature-specific approach allowed the system to consistently handle the diverse nature of the data.
+When this graph-based step yields no valid same-type neighbours within $k$ hops, the segment falls back to the global mean of the feature for its street type. Nodes that lie outside the largest connected component of the road graph bypass the neighbourhood step entirely and are imputed directly from the same street-type fallback. This two-stage fallback (same-street-type neighbours $\rightarrow$ same-street-type global mean) guarantees that every segment receives a value while keeping the imputation consistent with the local road typology.
 
 \subsection{Normalization and Scale Handling}
 
@@ -229,13 +229,13 @@ The current methodology defines the durable sampling unit as \texttt{(seed\_id, 
 
 \subsection{Artifact Construction}
 
-The seed-time artifact is precomputed outside the training loop to avoid expensive severity scoring during model training. The artifact contains rows keyed by seed and time index, with a congestion score and a bucket label. The final combined universe currently covers 1,937 seeds and 2,000 selected time indices, yielding 3,874,000 seed-time rows. The resulting bucket distribution is approximately balanced enough for controlled sampling: 1,939,990 low rows, 963,980 medium rows, and 970,030 high rows. The thresholding procedure uses the corrected convention that sparse missing target values count as zero, which prevents overestimating the frequency of severe congestion.
+The seed-time artifact is precomputed outside the training loop to avoid expensive severity scoring during model training. The artifact contains rows keyed by seed and time index, with a congestion score and a bucket label. The final combined universe currently covers 1,937 seeds and 2,000 selected time indices, yielding 3,874,000 seed-time rows. The resulting bucket distribution is sufficiently populated in the medium and high buckets to support stratified oversampling, despite the dominance of the low bucket. This is enough for controlled sampling: 1,939,990 low rows, 963,980 medium rows, and 970,030 high rows. The thresholding procedure uses the corrected convention that sparse missing target values count as zero, which prevents overestimating the frequency of severe congestion.
 
 \subsection{Epoch Planning}
 
 During training, the artifact is not sampled row by row as if every seed-time pair were independent. Instead, the runtime preserves the \texttt{TrafficDataset} graph constraint by planning one seed per batch and multiple time indices within that seed. In terms of implementation, when the parameter \texttt{seed-time-artifact-path} is provided, \texttt{training\_entrypoint.py} downloads and caches the artifact if necessary, \texttt{SeedTimeEpochPlanner} groups rows by seed and bucket, and \texttt{PlannedSeedTimeBatchSampler} maps the resulting plan back into standard dataset indices.
 
-With a batch size of 16 and one epoch cycle, the intended combined-artifact plan yields 1,937 batches per epoch and 30,992 sample slots. The target bucket mix is approximately 45\% high, 30\% medium, and 25\% low congestion. In the practical integer allocation for a 16-window batch, this corresponds to 7 high, 5 medium, and 4 low samples. This choice deliberately increases exposure to informative congestion cases while retaining enough low-congestion examples to prevent the model from losing calibration on normal traffic conditions.
+With a batch size of 16 and one epoch cycle, the intended combined-artifact plan yields 1,937 batches per epoch and 30,992 sample slots. The target bucket mix is approximately 44\% high, 31\% medium, and 25\% low congestion. In the practical integer allocation for a 16-window batch, this corresponds to 7 high, 5 medium, and 4 low samples. This choice deliberately increases exposure to informative congestion cases while retaining enough low-congestion examples to prevent the model from losing calibration on normal traffic conditions.
 
 \section{Model Architecture and Training Infrastructure}
 
@@ -259,7 +259,7 @@ The second variant, Temporal Graph Convolutional Network (TGCN), combines GCN-ba
 
 The third variant, GConvLSTM, extends the capabilities of GCNs by incorporating Long Short-Term Memory (LSTM) cells. This architecture excels in modeling longer-term dependencies, such as weekly and seasonal traffic patterns, although it comes with increased computational complexity.
 
-A fourth variant, Attention Temporal Graph Convolutional Network (A3TGCN), remains a supported or historical reference architecture. It enhances the TGCN architecture by introducing temporal attention mechanisms that dynamically assign weights to historical time steps. However, A3TGCN is not currently part of the active comparison line, as the focus has been on evaluating the performance of GConvGRU, TGCN, and GConvLSTM variants.
+A fourth variant, Attention Temporal Graph Convolutional Network (A3TGCN), remains a supported reference architecture. It enhances the TGCN architecture by introducing temporal attention mechanisms that dynamically assign weights to historical time steps. However, A3TGCN is not currently part of the active comparison line, as the focus has been on evaluating the performance of GConvGRU, TGCN, and GConvLSTM variants.
 
 \subsubsection{Multi-Target Prediction Architecture}
 A distinguishing feature of the proposed framework is its capability for multi-target prediction, which allows for the simultaneous forecasting of multiple traffic metrics. The primary target of the model is the jam level, which quantifies congestion severity on a scale from 0 to 5 and serves as the core variable for assessing traffic conditions. In addition to the jam level, the model also predicts the mean jam velocity, which provides complementary insights into the characteristics of traffic flow.
@@ -310,7 +310,7 @@ Let $b_c$ for $c=0,\dots,5$ denote the base level weights (default $[0.25,1,2,3,
 \begin{equation}
 w(i) = b_{\ell( y_i)}\, M_i,
 \end{equation}
-where index $i$ enumerates all scalar prediction locations. To avoid divide-by-zero, all denominators are clamped away from zero (implementation uses a small epsilon).
+where index $i$ enumerates all scalar prediction locations. To avoid divide-by-zero, all denominators are clamped to a small positive floor; the implementation uses a floor of $1.0$ for the terms in $L_{\mathrm{base}}$ and a small $\varepsilon$ in the shape loss.
 
 \paragraph{Continuous regression term.} Let $\delta_i = p_i - y_i$ be the error on the \emph{unscaled} predictions and targets. Depending on the configuration this term is one of:
 \begin{align}
@@ -350,22 +350,23 @@ Additionally, a piecewise severe term penalizes absolute errors at locations whe
 L_{\mathrm{piece}} = \frac{\sum_{i:\,\hat y_i\ge T_{\mathrm{severe}}} w(i)\,|\delta_i|}{\sum_{i:\,\hat y_i\ge T_{\mathrm{severe}}} w(i)}.
 \end{equation}
 
-\paragraph{Directional underprediction penalty.} This term operates on the unscaled predictions and targets. For indices where $p_i<y_i$:
+\paragraph{Directional underprediction penalty.} This term operates on the unscaled predictions and targets, restricted to finite target locations. For indices where $M_i=1$ and $p_i<y_i$:
 \begin{equation}
-L_{\mathrm{under}} = \frac{\sum_{i:\,p_i<y_i} w(i)\,(y_i-p_i)}{\sum_{i:\,p_i<y_i} w(i)}.
+L_{\mathrm{under}} = \frac{\sum_{i:\,M_i=1,\,p_i<y_i} w(i)\,(y_i-p_i)}{\sum_{i:\,M_i=1,\,p_i<y_i} w(i)}.
 \end{equation}
 
-\paragraph{Aggregate base objective.} Using scalar coefficients (implementation names shown in parentheses) we combine the above:
+\paragraph{Aggregate base objective.} Using scalar coefficients (whose implementation names are listed below) we combine the above:
 \begin{equation}
 L_{\mathrm{base}} = L_{\mathrm{cont}} + \lambda_{\mathrm{CE}} L_{\mathrm{CE}} + \lambda_{\mathrm{dist}} L_{\mathrm{dist}} + \lambda_{\mathrm{large}} L_{\mathrm{large}} + \lambda_{\mathrm{high}} L_{\mathrm{high}} + \lambda_{\mathrm{piece}} L_{\mathrm{piece}} + \lambda_{\mathrm{under}} L_{\mathrm{under}}.
 \end{equation}
+The coefficients correspond to \texttt{class\_ce\_lambda} ($\lambda_{\mathrm{CE}}$), \texttt{class\_distance\_lambda} ($\lambda_{\mathrm{dist}}$), \texttt{large\_error\_lambda} ($\lambda_{\mathrm{large}}$), \texttt{high\_level\_lambda} ($\lambda_{\mathrm{high}}$), \texttt{piecewise\_mae\_lambda} ($\lambda_{\mathrm{piece}}$), \texttt{directional\_lambda} ($\lambda_{\mathrm{under}}$), and \texttt{shape\_lambda} ($\lambda_s$). The thresholds correspond to \texttt{large\_error\_threshold} ($T_{\mathrm{large}}$), \texttt{high\_level\_threshold} ($T_{\mathrm{high}}$), and \texttt{piecewise\_threshold} ($T_{\mathrm{severe}}$).
 
 \paragraph{Node-wise Pearson shape loss.} For each node-series (all non-horizon dimensions collapsed into an index $n$) consider the horizon entries $t=1,\dots,H$ and restrict to those $t$ where both $\hat p_{n,t}$ and $\hat y_{n,t}$ are finite. Denote the finite count $N_n$, and let $\bar p_n$, $\bar y_n$ be the finite-entry means. Define the population covariance and standard deviations
 \begin{equation}
 \operatorname{cov}_n = \frac{1}{N_n}\sum_{t\in\mathcal{T}_n}(\hat p_{n,t}-\bar p_n)(\hat y_{n,t}-\bar y_n), \qquad
-\sigma_{p,n} = \sqrt{\frac{1}{N_n}\sum_{t\in\mathcal{T}_n}(\hat p_{n,t}-\bar p_n)^2 + \varepsilon},
+\sigma_{p,n} = \sqrt{\Bigl(\tfrac{1}{N_n}\sum_{t\in\mathcal{T}_n}(\hat p_{n,t}-\bar p_n)^2\Bigr) + \varepsilon},
 \end{equation}
-and $\sigma_{y,n}$ analogously, where $\mathcal{T}_n$ denotes the set of finite time indices for node $n$. The Pearson correlation for node $n$ is
+and $\sigma_{y,n}$ analogously, where $\mathcal{T}_n$ denotes the set of horizon indices for which both $\hat p_{n,t}$ and $\hat y_{n,t}$ are finite. The Pearson correlation for node $n$ is
 \begin{equation}
 \rho_n = \operatorname{clamp}\!\left(\frac{\operatorname{cov}_n}{\sigma_{p,n}\,\sigma_{y,n} + \varepsilon},\,-1,\,1\right).
 \end{equation}
@@ -427,6 +428,7 @@ Primary runtime & AWS SageMaker with EFS and S3 artifacts \\
 
 \subsection{Offline Validation Results}
 
+% TODO: Strongest-claim language without comparable numbers. List the corresponding metrics for GConvGRU and TGCN in the same paragraph (exact accuracy, ±1 accuracy, level MAE) so the reader can see the gap rather than infer it. Also state whether the four-decimal precision (0.6538, 0.8357, 0.6301) reflects single-seed runs; if so, say so explicitly so the reader does not over-interpret a ~0.01 gap between models.
 The latest completed SageMaker comparison line uses the 2026-04-20 shape-loss runs for GConvLSTM, GConvGRU, and TGCN. In this validation line, GConvLSTM is the strongest global model, with validation exact accuracy of 0.6538, plus-or-minus-one accuracy of 0.8357, and level MAE of 0.6301. GConvGRU remains strongest on high-congestion levels 3 and 4 among the latest three-model comparison, while TGCN shows the largest improvement relative to its previous version, driven primarily by lower congestion levels.
 
 \begin{table}[htbp]
@@ -449,6 +451,7 @@ These results suggest that the model-family decision is not a simple global-metr
 
 \subsection{Dense Real-Time Evaluation}
 
+% TODO: "10 prediction files" is unanchored. State the calendar window the 10 files cover, the number of seeds and forecast steps per file, and the total prediction count being evaluated. Also state the sign convention for "bias" explicitly (e.g. predicted minus actual, so a positive bias of 1.6535 means systematic overprediction).
 Real-time evaluation is now active against dense prediction surfaces produced by the sibling inference system. Dense evaluation interprets missing Waze jams as level 0 and compares the full prediction surface rather than only observed jam records. A stable partial summary over 10 prediction files reports MAE of 1.7331, RMSE of 1.9473, bias of 1.6535, exact accuracy of 0.1897, and plus-or-minus-one accuracy of 0.3351.
 
 \begin{table}[htbp]
@@ -494,6 +497,14 @@ Several limitations remain before the paper can present final deployment-grade c
 The next experimental priority is to complete the larger dense evaluation over the full last-seven-day prediction set and summarize metrics globally, by true congestion level, and by forecast step. This should be followed by a calibration decision: either recalibrate the current best model line, retrain with further loss and sampling adjustments, or pursue both paths in parallel. Because the current dense evaluation shows overprediction at low levels and underprediction at high levels, calibration should be evaluated not only by global MAE but also by false positives for level 0 and recall-like behavior for levels 3 and 4.
 
 The next engineering priority is to improve traceability. S3 prediction backups should persist model identity fields such as \texttt{model\_version}, \texttt{model\_md5}, \texttt{training\_job\_name}, \texttt{model\_artifact\_s3}, and inference code version. Training checkpoints should likewise save durable identity fields so that the inference system can resolve a model version without relying on informal artifact names. These changes would make future evaluation tables more defensible because every prediction file could be linked to a specific training run and model artifact.
+
+\section{Conclusion}
+
+This white paper has presented an end-to-end Spatio-Temporal Graph Neural Network forecasting system for Bogotá's road network, jointly contributed by the Government of Bogotá and the Inter-American Development Bank. Beyond the model families themselves (GConvLSTM, GConvGRU, and TGCN), the work delivers a reusable engineering substrate: a sparse HDF5 graph-temporal data contract, a seed-time sampler that explicitly rebalances exposure across congestion buckets, and an evaluation path that separates historical sparse validation from dense operational behaviour.
+
+The current comparison line shows that the pipeline can train all three architectures to useful sparse-validation accuracy, with GConvLSTM strongest on aggregate metrics, GConvGRU strongest on high-congestion levels, and TGCN producing the largest relative improvement over its previous baseline. The dense real-time evaluation surface, however, is not yet numerically comparable to the sparse validation results and currently exhibits systematic overprediction at low levels and underprediction at high levels.
+
+Before a deployment-grade reading can be reported, two gating steps remain: completing the full last-seven-day dense evaluation summarised globally, by true congestion level, and by forecast step; and closing the traceability gap by persisting durable model identity in both training checkpoints and S3 prediction backups. Together these steps will let a future iteration of this paper present model-family selection as a defensible, fully reproducible decision rather than a stable partial reading.
 
 % --- Bibliography ---
 \bibliographystyle{ieeetr}
