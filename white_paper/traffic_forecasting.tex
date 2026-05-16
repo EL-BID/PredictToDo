@@ -44,9 +44,9 @@ The core of this initiative lies in the ability to accurately predict traffic co
 
 Recent advancements in this field have produced powerful architectures. The \textbf{GConvLSTM} and \textbf{GConvGRU}~\cite{seo_gcrn} integrate Graph Convolutional Networks (GCNs) with recurrent units, effectively learning sequence patterns on graph structures. Similarly, the Temporal Graph Convolutional Network (\textbf{TGCN})~\cite{zhao_tgcn} combines GCNs with Gated Recurrent Units (GRUs) to capture non-linear traffic dynamics. Attention mechanisms, as in the Attention Based Spatial-Temporal Graph Convolutional Network (\textbf{A3TGCN})~\cite{zhu_a3tgcn}, remain an important reference point, although the current empirical comparison in this repository concentrates on GConvLSTM, GConvGRU, and TGCN.
 
-This white paper details the deployment path for these ST-GNN architectures under Bogotá-specific data and operational constraints By accurately modeling the spatio-temporal dependencies of the city's traffic, we aim to provide actionable insights for the \textit{Secretaría de Movilidad}, facilitating proactive rather than reactive traffic management.
+This white paper details the deployment path for these ST-GNN architectures under Bogotá-specific data and operational constraints. By accurately modeling the spatio-temporal dependencies of the city's traffic, we aim to provide actionable insights for the \textit{Secretaría de Movilidad}, facilitating proactive rather than reactive traffic management.
 
-The practical contribution of this work is therefore not limited to the selection of a neural architecture. It also includes the construction of a graph-temporal data contract for Bogotá, the transformation of highly sparse mobility observations into efficient training tensors, the design of a sampler that explicitly addresses the imbalance between uncongested and congested conditions, and the creation of an evaluation path that distinguishes sparse validation performance from dense operational behavior.
+Beyond the architectural choice, the practical contribution of this work is also to include the construction of a graph-temporal data contract for Bogotá, the transformation of highly sparse mobility observations into efficient training tensors, the design of a sampler that explicitly addresses the imbalance between uncongested and congested conditions, and the creation of an evaluation path that distinguishes sparse validation performance from dense operational behavior.
 These engineering decisions are central to the project, because they determine which traffic states the model sees during training and how its predictions can be interpreted after deployment.
 
 \section{System Overview}
@@ -93,14 +93,20 @@ In traffic prediction, the goal is to capture both spatial patterns (graph struc
 
 \subsubsection{Recurrent-Based Approaches}
 A prominent direction in ST-GNNs involves integrating graph convolution operations into recurrent neural network (RNN) cells. Seo et al.~\cite{seo_gcrn} introduced the Graph Convolutional Recurrent Network, which incorporates the Chebyshev spectral graph convolution operator directly into the input-to-state and state-to-state transitions of LSTM and GRU cells. These models, referred to as \textbf{GConvLSTM} and \textbf{GConvGRU}, are capable of learning spatial structures that evolve over time. The key idea is to replace the standard matrix multiplication in RNNs with graph convolution operations, enabling the model to capture the topological relationships inherent in the road network. Mathematically, the state update for a GConvGRU can be expressed as:
-\begin{equation}
-  h_t = \sigma\left(W_h \cdot \text{GCN}(A, h_{t-1}) + W_x \cdot x_t + b\right),
-\end{equation}
+% \begin{equation}
+%   h_t = \sigma\left(W_h \cdot \text{GCN}(A, h_{t-1}) + W_x \cdot x_t + b\right),
+% \end{equation}
+\begin{align}
+  z_t &= \sigma(\mathrm{GCN}(A,[x_t,h_{t-1}];W_z)), \\
+  r_t &= \sigma(\mathrm{GCN}(A,[x_t,h_{t-1}];W_r)), \\
+  \tilde{h}_t &= \tanh(\mathrm{GCN}(A,[x_t,r_t \odot h_{t-1}];W_h)), \\
+  h_t &= (1 - z_t) \odot h_{t-1} + z_t \odot \tilde{h}_t,
+\end{align}
 where \( h_t \) is the hidden state at time \( t \), \( x_t \) is the input at time \( t \), \( A \) is the adjacency matrix of the graph, \( W_h \) and \( W_x \) are learnable weight matrices, \( b \) is the bias term, and \( \sigma \) is a non-linear activation function.
 
 Similarly, Zhao et al.~\cite{zhao_tgcn} proposed the Temporal Graph Convolutional Network (\textbf{TGCN}), which combines a Graph Convolutional Network (GCN) for spatial feature extraction with a GRU for temporal modeling. The GCN captures the topological relationships of the road network, while the GRU models the dynamic changes in traffic data over time. The TGCN can be expressed as:
 \begin{equation}
-  H^{(l+1)} = \sigma\left(A H^{(l)} W^{(l)} + b^{(l)}\right),
+  H^{(l+1)} = \sigma\left(\tilde{D}^{-1/2} \tilde{A} \tilde{D}^{-1/2} H^{(l)} W^{(l)} + b^{(l)}\right),
 \end{equation}
 where \( H^{(l)} \) represents the node embeddings at layer \( l \), \( W^{(l)} \) is the weight matrix, and \( b^{(l)} \) is the bias term. The temporal dynamics are then modeled using a GRU:
 \begin{align}
@@ -136,7 +142,7 @@ Our approach leverages a diverse array of urban data sources to capture the mult
 \subsubsection{Primary Traffic Features}
 The core traffic data is derived from Waze's crowdsourced traffic jams dataset, providing real-time insights into congestion patterns across the city's road network. The \texttt{JamsProcessor} component extracts and spatially assigns traffic features to road segments through geometric matching. Traffic jams are mapped to specific road segments using a 4-meter buffer around each road's geometry, with overlap thresholds applied to refine the spatial join process.
 
-To align the temporal granularity of the raw jam data with the model's requirements, the data was aggregated into 15-minute intervals. This temporal resolution was chosen to balance the need for capturing traffic dynamics with the computational efficiency required for large-scale data processing. The aggregated data includes multiple features for each road segment and time window, such as congestion severity (i.e., \textit{jam level}), delay metrics, average speeds, and amount of severe congestion events (i.e., \textit{jam count}) statistics. These features provide a multi-dimensional representation of traffic conditions, enabling the model to capture the complex dynamics of urban mobility.
+To align the temporal granularity of the raw jam data with the model's requirements, the data was aggregated into 15-minute intervals. This temporal resolution was chosen to balance the need for capturing traffic dynamics with the computational efficiency required for large-scale data processing. The aggregated data includes multiple features for each road segment and time window, such as congestion severity (i.e., \textit{jam level}), delay metrics, average speeds, and a count of severe congestion events (i.e., \textit{jam count}).. These features provide a multi-dimensional representation of traffic conditions, enabling the model to capture the complex dynamics of urban mobility.
 
 Environmental and contextual factors, such as weather conditions, also play a significant role in influencing traffic patterns. To incorporate these factors, meteorological data from multiple weather stations was processed and integrated into the model. Key weather variables, including wind direction and speed, humidity, precipitation, and temperature, were collected and assigned to road segments based on their proximity to weather stations. A 15-meter buffer was used to ensure that each road segment received relevant environmental context. Furthermore, the weather data was temporally aligned with the traffic data using the same 15-minute resolution, ensuring consistency in the temporal representation of the dataset.
 
@@ -215,7 +221,7 @@ By implementing these strategies for sparse storage, seed-time batching, missing
 
 \section{Seed-Time Sampling Methodology}
 
-One of the main empirical challenges in the project is the imbalance of congestion states. Urban traffic data contains many road segments and time windows with no meaningful congestion signal, while the operationally important cases are precisely the medium- and high-severity events that occur less frequently. Earlier training runs were therefore dominated by low-severity samples. A sampler that merely walks through global time indices can improve temporal coverage, but it does not fully align sample severity with the actual seed-local graph seen by the mode in each batch.
+One of the main empirical challenges in the project is the imbalance of congestion states. Urban traffic data contains many road segments and time windows with no meaningful congestion signal, while the operationally important cases are precisely the medium- and high-severity events that occur less frequently. Earlier training runs were therefore dominated by low-severity samples. A sampler that merely walks through global time indices can improve temporal coverage, but it does not fully align sample severity with the actual seed-local graph seen by the model in each batch.
 
 \subsection{Sampling Unit}
 
@@ -274,7 +280,7 @@ Additionally, the training pipeline integrates with the AWS Elastic File System 
 \subsubsection{Advanced Memory Management}
 Given the memory-intensive nature of large-scale graph processing, the training system incorporates several advanced memory optimization techniques. One such technique is dynamic graph batching, where edge indices are constructed dynamically for each batch. This approach allows the creation of batched graph representations that maximize GPU utilization while adhering to memory constraints.
 
-Another critical optimization is gradient accumulation, which enables the use of large effective batch sizes by accumulating gradients across multiple mini-batches. This technique is particularly useful for achieving stable training when GPU memory is limited. Furthermore, the system employs Automatic Mixed Precision (AMP) training with GradScaler. This method reduces memory usage by by performing computations in lower precision while maintaining numerical stability through dynamic loss scaling. These memory management strategies are essential for ensuring that the training process remains efficient and scalable, even when dealing with the extensive data and computational requirements of urban traffic prediction.
+Another critical optimization is gradient accumulation, which enables the use of large effective batch sizes by accumulating gradients across multiple mini-batches. This technique is particularly useful for achieving stable training when GPU memory is limited. Furthermore, the system employs Automatic Mixed Precision (AMP) training with GradScaler. This method reduces memory usage by performing computations in lower precision while maintaining numerical stability through dynamic loss scaling. These memory management strategies are essential for ensuring that the training process remains efficient and scalable, even when dealing with the extensive data and computational requirements of urban traffic prediction.
 
 \subsection{Training Strategy and Optimization}
 
@@ -306,7 +312,7 @@ w(i) = b_{\ell( y_i)}\, M_i,
 \end{equation}
 where index $i$ enumerates all scalar prediction locations. To avoid divide-by-zero, all denominators are clamped away from zero (implementation uses a small epsilon).
 
-\paragraph{Continuous regression term.} Let $\delta_i = p_i - y_i$. Depending on the configuration this term is one of:
+\paragraph{Continuous regression term.} Let $\delta_i = p_i - y_i$ be the error on the \emph{unscaled} predictions and targets. Depending on the configuration this term is one of:
 \begin{align}
 \text{MAE: } & h(\delta_i) = |\delta_i|,\\
 \text{MSE: } & h(\delta_i) = \delta_i^2,\\
@@ -335,13 +341,16 @@ An additional squared-distance penalty is applied to large class errors (indices
 L_{\mathrm{large}} = \frac{\sum_{i:\,d_i\ge T_{\mathrm{large}}} w(i)\, d_i^2}{\sum_{i:\,d_i\ge T_{\mathrm{large}}} w(i)}.
 \end{equation}
 
-\paragraph{High- and severe-level MAE terms.} Restricting to locations with target class above a threshold $T_{\mathrm{high}}$ yields a weighted MAE
+\paragraph{High- and severe-level MAE terms.} Restricting to locations with target class above a threshold $T_{\mathrm{high}}$ yields a weighted MAE on the unscaled errors $\delta_i$:
 \begin{equation}
-L_{\mathrm{high}} = \frac{\sum_{i:\,\ell(y_i)\ge T_{\mathrm{high}}} w(i)\,|\delta_i|}{\sum_{i:\,\ell(y_i)\ge T_{\mathrm{high}}} w(i)}
+L_{\mathrm{high}} = \frac{\sum_{i:\,\ell(y_i)\ge T_{\mathrm{high}}} w(i)\,|\delta_i|}{\sum_{i:\,\ell(y_i)\ge T_{\mathrm{high}}} w(i)}.
 \end{equation}
-and the piecewise severe term is analogous but uses the continuous target value condition $\hat y_i\ge T_{\mathrm{severe}}$.
+Additionally, a piecewise severe term penalizes absolute errors at locations where the scaled target exceeds a severe threshold $T_{\mathrm{severe}}$:
+\begin{equation}
+L_{\mathrm{piece}} = \frac{\sum_{i:\,\hat y_i\ge T_{\mathrm{severe}}} w(i)\,|\delta_i|}{\sum_{i:\,\hat y_i\ge T_{\mathrm{severe}}} w(i)}.
+\end{equation}
 
-\paragraph{Directional underprediction penalty.} For indices where $p_i<y_i$ define
+\paragraph{Directional underprediction penalty.} This term operates on the unscaled predictions and targets. For indices where $p_i<y_i$:
 \begin{equation}
 L_{\mathrm{under}} = \frac{\sum_{i:\,p_i<y_i} w(i)\,(y_i-p_i)}{\sum_{i:\,p_i<y_i} w(i)}.
 \end{equation}
@@ -351,13 +360,18 @@ L_{\mathrm{under}} = \frac{\sum_{i:\,p_i<y_i} w(i)\,(y_i-p_i)}{\sum_{i:\,p_i<y_i
 L_{\mathrm{base}} = L_{\mathrm{cont}} + \lambda_{\mathrm{CE}} L_{\mathrm{CE}} + \lambda_{\mathrm{dist}} L_{\mathrm{dist}} + \lambda_{\mathrm{large}} L_{\mathrm{large}} + \lambda_{\mathrm{high}} L_{\mathrm{high}} + \lambda_{\mathrm{piece}} L_{\mathrm{piece}} + \lambda_{\mathrm{under}} L_{\mathrm{under}}.
 \end{equation}
 
-\paragraph{Node-wise Pearson shape loss.} For each node-series (all non-horizon dimensions collapsed into an index $n$) consider the horizon entries $t=1,\dots,H$ and restrict to those $t$ where both $\hat p_{n,t}$ and $\hat y_{n,t}$ are finite. Denote the finite-count $N_n$, the masked means $\bar p_n,\bar y_n$, centered series, and sample covariance and standard deviations $\operatorname{cov}_n,\sigma_{p,n},\sigma_{y,n}$. The Pearson correlation for node $n$ is
+\paragraph{Node-wise Pearson shape loss.} For each node-series (all non-horizon dimensions collapsed into an index $n$) consider the horizon entries $t=1,\dots,H$ and restrict to those $t$ where both $\hat p_{n,t}$ and $\hat y_{n,t}$ are finite. Denote the finite count $N_n$, and let $\bar p_n$, $\bar y_n$ be the finite-entry means. Define the population covariance and standard deviations
 \begin{equation}
-\rho_n = \frac{\operatorname{cov}_n}{\sigma_{p,n}\,\sigma_{y,n} + \varepsilon},
+\operatorname{cov}_n = \frac{1}{N_n}\sum_{t\in\mathcal{T}_n}(\hat p_{n,t}-\bar p_n)(\hat y_{n,t}-\bar y_n), \qquad
+\sigma_{p,n} = \sqrt{\frac{1}{N_n}\sum_{t\in\mathcal{T}_n}(\hat p_{n,t}-\bar p_n)^2 + \varepsilon},
 \end{equation}
-and the node weight is
+and $\sigma_{y,n}$ analogously, where $\mathcal{T}_n$ denotes the set of finite time indices for node $n$. The Pearson correlation for node $n$ is
 \begin{equation}
-\omega_n = 1 + \alpha_{\mathrm{std}}\,\sigma_{y,n} + \alpha_{\mathrm{range}}\,(\max_t\hat y_{n,t}-\min_t\hat y_{n,t}) + \alpha_{\mathrm{max}}\,\max_t\hat y_{n,t}.
+\rho_n = \operatorname{clamp}\!\left(\frac{\operatorname{cov}_n}{\sigma_{p,n}\,\sigma_{y,n} + \varepsilon},\,-1,\,1\right).
+\end{equation}
+The node weight combines the population standard deviation of the target with its range and maximum. Define the zero-filled target series $\tilde{y}_{n,t} = \hat{y}_{n,t}\,\mathbf{1}_{t\in\mathcal{T}_n}$ (i.e.\ non-finite entries are replaced by zero). The node weight is then
+\begin{equation}
+\omega_n = 1 + \alpha_{\mathrm{std}}\,\sigma_{y,n} + \alpha_{\mathrm{range}}\,\max\!\left(0,\,\max_t\tilde{y}_{n,t}-\min_t\tilde{y}_{n,t}\right) + \alpha_{\mathrm{max}}\,\max\!\left(0,\,\max_t\tilde{y}_{n,t}\right).
 \end{equation}
 Only nodes with $N_n\ge 2$ and $\sigma_{y,n}>\mathrm{min\_std}$ are included. The weighted shape loss is
 \begin{equation}
@@ -369,7 +383,7 @@ Putting it all together yields the final training objective used in code. All te
 
 To ensure comprehensive and informative coverage during training, the current runtime uses the seed-time planner described above when a sampling artifact is provided. The legacy seed-based sampler remains available, but the active direction is artifact-driven planning over seed and time pairs with controlled congestion-bucket ratios.
 
-The training configuration is designed to balance computational efficiency with model performance. Input sequences of 150 timesteps (equivalent to 37.5 hours) are used, with output horizons of $50$ timesteps (12.5 hours). This configuration provides sufficient historical context for the model to learn from while maintaining practical forecast utility. The training process employs the Adam optimizer with a learning rate of $0.001$, a gradient clipping norm of $1.0$, and a batch size of $16$, with each batch containing approximately $500$ nodes. To minimize I/O bottlenecks during GPU computation, the data loading process is optimized using multi-worker data loading with four workers, persistent workers, and prefetching with a factor of two. Comprehensive regularization techniques, including tensor validation, NaN/infinity detection, and statistical monitoring, are implemented to prevent training instabilities and ensure the robustness of the model.
+The training configuration is designed to balance computational efficiency with model performance. Input sequences of 150 timesteps (equivalent to 37.5 hours) are used, with output horizons of $50$ timesteps (12.5 hours). This configuration provides sufficient historical context for the model to learn from while maintaining practical forecast utility. The training process employs the Adam optimizer with a learning rate of $0.001$, a gradient clipping norm of $1.0$, and a batch size of $16$, with each batch containing approximately $500$ nodes. To minimize I/O bottlenecks during GPU computation, the data loading process is optimized using multi-worker data loading with four workers, persistent workers, and prefetching with a factor of two. Training stability measures, including tensor validation, NaN/infinity detection, and statistical monitoring, are implemented to prevent training instabilities and ensure the robustness of the model.
 
 The training system also incorporates monitoring and validation capabilities to ensure the quality and reliability of the trained models. Runtime logs include loss metrics, congestion-level operational metrics, and timing metrics such as data wait, transfer, forward pass, loss computation, backward pass, optimizer step, and total step time. Integration with AWS SageMaker's metric definitions allows automatic capture and visualization through AWS CloudWatch, although the parsed metric surface is intentionally compressed to remain within SageMaker metric-definition limits. Regular model checkpointing is performed to preserve the model state, enabling model selection based on validation performance.
 
