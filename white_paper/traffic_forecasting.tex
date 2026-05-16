@@ -96,6 +96,7 @@ A prominent direction in ST-GNNs involves integrating graph convolution operatio
 % \begin{equation}
 %   h_t = \sigma\left(W_h \cdot \text{GCN}(A, h_{t-1}) + W_x \cdot x_t + b\right),
 % \end{equation}
+\begin{align}
   z_t &= \sigma(\mathrm{GCN}(A,[x_t,h_{t-1}];W_z)), \\
   r_t &= \sigma(\mathrm{GCN}(A,[x_t,h_{t-1}];W_r)), \\
   \tilde{h}_t &= \tanh(\mathrm{GCN}(A,[x_t,r_t \odot h_{t-1}];W_h)), \\
@@ -258,7 +259,7 @@ The second variant, Temporal Graph Convolutional Network (TGCN), combines GCN-ba
 
 The third variant, GConvLSTM, extends the capabilities of GCNs by incorporating Long Short-Term Memory (LSTM) cells. This architecture excels in modeling longer-term dependencies, such as weekly and seasonal traffic patterns, although it comes with increased computational complexity.
 
-A fourth variant, Attention Temporal Graph Convolutional Network (A3TGCN), remains a supported or historical reference architecture. It enhances the TGCN architecture by introducing temporal attention mechanisms that dynamically assign weights to historical time steps. However, A3TGCN is not currently part of the active comparison line, as the focus has been on evaluating the performance of GConvGRU, TGCN, and GConvLSTM variants.
+A fourth variant, Attention Temporal Graph Convolutional Network (A3TGCN), remains a supported reference architecture. It enhances the TGCN architecture by introducing temporal attention mechanisms that dynamically assign weights to historical time steps. However, A3TGCN is not currently part of the active comparison line, as the focus has been on evaluating the performance of GConvGRU, TGCN, and GConvLSTM variants.
 
 \subsubsection{Multi-Target Prediction Architecture}
 A distinguishing feature of the proposed framework is its capability for multi-target prediction, which allows for the simultaneous forecasting of multiple traffic metrics. The primary target of the model is the jam level, which quantifies congestion severity on a scale from 0 to 5 and serves as the core variable for assessing traffic conditions. In addition to the jam level, the model also predicts the mean jam velocity, which provides complementary insights into the characteristics of traffic flow.
