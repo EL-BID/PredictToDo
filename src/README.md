@@ -16,3 +16,5 @@ Important modules:
 - `prediction_reconstruction.py`: maps predictions back to road/timestamp outputs
 
 The most important invariant is that one batch must use one seed-local graph. This keeps the `edge_index` contract stable.
+
+For a generated inventory of Python classes, functions, and methods, see `../docs/code-reference.md`.

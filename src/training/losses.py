@@ -3,6 +3,33 @@ from __future__ import annotations
 import torch
 
 
+def _horizon_weights_like(
+    pred: torch.Tensor,
+    *,
+    short_steps: int = 0,
+    mid_steps: int = 0,
+    short_weight: float = 1.0,
+    mid_weight: float = 1.0,
+    long_weight: float = 1.0,
+) -> torch.Tensor:
+    """Build per-forecast-step weights broadcastable to ``pred``.
+
+    The last tensor dimension is treated as the forecast horizon. Defaults are
+    all ones, so this is backward compatible with the previous loss.
+    """
+    horizon = int(pred.shape[-1])
+    weights = torch.full((horizon,), float(long_weight), device=pred.device, dtype=pred.dtype)
+
+    short_steps = max(0, min(int(short_steps), horizon))
+    mid_steps = max(short_steps, min(int(mid_steps), horizon))
+    if mid_steps > short_steps:
+        weights[short_steps:mid_steps] = float(mid_weight)
+    if short_steps > 0:
+        weights[:short_steps] = float(short_weight)
+
+    return weights.view(*([1] * (pred.dim() - 1)), horizon)
+
+
 def _weighted_nodewise_pearson_loss(
     pred_real: torch.Tensor,
     target_real: torch.Tensor,
@@ -88,6 +115,7 @@ def masked_mse(
     pred: torch.Tensor,
     target: torch.Tensor,
     *,
+    valid_mask: torch.Tensor | None = None,
     level_weights: torch.Tensor | None = None,
     level_scale: float = 1.0,
     continuous_loss: str = "huber",
@@ -107,6 +135,15 @@ def masked_mse(
     shape_weight_std: float = 0.75,
     shape_weight_range: float = 0.25,
     shape_weight_max: float = 1.0,
+    horizon_short_steps: int = 0,
+    horizon_mid_steps: int = 0,
+    horizon_short_weight: float = 1.0,
+    horizon_mid_weight: float = 1.0,
+    horizon_long_weight: float = 1.0,
+    zero_overprediction_lambda: float = 0.0,
+    zero_overprediction_threshold: float = 0.5,
+    high_underprediction_lambda: float = 0.0,
+    high_underprediction_threshold: int = 3,
 ) -> torch.Tensor:
     """Composite loss for congestion level prediction.
 
@@ -115,7 +152,13 @@ def masked_mse(
     - exact class alignment
     - stronger penalties for large class-distance errors
     """
-    mask = torch.isfinite(target)
+    mask = torch.isfinite(target) & torch.isfinite(pred)
+    if valid_mask is not None:
+        valid_mask = torch.broadcast_to(
+            valid_mask.to(device=target.device, dtype=torch.bool),
+            target.shape,
+        )
+        mask = mask & valid_mask
     pred_real = pred * float(level_scale)
     target_real = target * float(level_scale)
     target_levels = torch.clamp(target_real.round(), 0, 5).long()
@@ -135,22 +178,31 @@ def masked_mse(
         level_weights_expanded,
         torch.zeros((), device=pred.device, dtype=pred.dtype),
     )
+    horizon_weights = _horizon_weights_like(
+        pred,
+        short_steps=horizon_short_steps,
+        mid_steps=horizon_mid_steps,
+        short_weight=horizon_short_weight,
+        mid_weight=horizon_mid_weight,
+        long_weight=horizon_long_weight,
+    )
+    element_weights = level_weights_expanded * horizon_weights
 
     diff = pred - target
     abs_diff = diff.abs()
-    denom = level_weights_expanded.sum().clamp_min(1)
+    denom = element_weights.sum().clamp_min(1)
 
     if continuous_loss == "mae":
-        base_loss = (abs_diff * level_weights_expanded).sum() / denom
+        base_loss = (abs_diff * element_weights).sum() / denom
     elif continuous_loss == "mse":
-        base_loss = ((diff**2) * level_weights_expanded).sum() / denom
+        base_loss = ((diff**2) * element_weights).sum() / denom
     else:
         huber = torch.where(
             abs_diff <= huber_delta,
             0.5 * diff**2,
             huber_delta * (abs_diff - 0.5 * huber_delta),
         )
-        base_loss = (huber * level_weights_expanded).sum() / denom
+        base_loss = (huber * element_weights).sum() / denom
 
     total_loss = base_loss
 
@@ -164,7 +216,7 @@ def masked_mse(
             target_levels[mask],
             reduction="none",
         )
-        ce_weights = level_weights_expanded[mask]
+        ce_weights = element_weights[mask]
         ce_loss = (ce * ce_weights).sum() / ce_weights.sum().clamp_min(1)
         total_loss = total_loss + class_ce_lambda * ce_loss
 
@@ -172,23 +224,23 @@ def masked_mse(
     class_distance = (pred_levels - target_levels).abs().to(pred.dtype)
 
     if class_distance_lambda > 0:
-        distance_penalty = (class_distance * level_weights_expanded).sum() / denom
+        distance_penalty = (class_distance * element_weights).sum() / denom
         total_loss = total_loss + class_distance_lambda * distance_penalty
 
     if large_error_lambda > 0:
         large_mask = mask & (class_distance >= large_error_threshold)
         if large_mask.any():
             large_distance = (class_distance[large_mask] ** 2).to(pred.dtype)
-            large_weights = level_weights_expanded[large_mask]
+            large_weights = element_weights[large_mask]
             large_loss = (large_distance * large_weights).sum() / large_weights.sum().clamp_min(1)
             total_loss = total_loss + large_error_lambda * large_loss
 
     if high_level_lambda > 0:
         high_mask = mask & (target_levels >= high_level_threshold)
         if high_mask.any():
-            weighted_errors = abs_diff * level_weights_expanded
-            high_weight_sum = level_weights_expanded.where(
-                high_mask, torch.zeros_like(level_weights_expanded)
+            weighted_errors = abs_diff * element_weights
+            high_weight_sum = element_weights.where(
+                high_mask, torch.zeros_like(element_weights)
             ).sum().clamp_min(1)
             mae_loss = weighted_errors.where(
                 high_mask, torch.zeros_like(weighted_errors)
@@ -199,8 +251,8 @@ def masked_mse(
         severe_mask = mask & (target_real >= piecewise_threshold)
         if severe_mask.any():
             severe_errors = abs_diff
-            severe_weights = level_weights_expanded.where(
-                severe_mask, torch.zeros_like(level_weights_expanded)
+            severe_weights = element_weights.where(
+                severe_mask, torch.zeros_like(element_weights)
             )
             severe_weight_sum = severe_weights.sum().clamp_min(1)
             severe_loss = (severe_errors * severe_weights).sum() / severe_weight_sum
@@ -209,19 +261,50 @@ def masked_mse(
     if directional_lambda > 0:
         under_mask = mask & (pred < target)
         if under_mask.any():
-            directional_penalty = (target - pred) * level_weights_expanded
-            under_weight_sum = level_weights_expanded.where(
-                under_mask, torch.zeros_like(level_weights_expanded)
+            directional_penalty = (target - pred) * element_weights
+            under_weight_sum = element_weights.where(
+                under_mask, torch.zeros_like(element_weights)
             ).sum().clamp_min(1)
             penalty_sum = directional_penalty.where(
                 under_mask, torch.zeros_like(directional_penalty)
             ).sum()
             total_loss = total_loss + directional_lambda * penalty_sum / under_weight_sum
 
+    if zero_overprediction_lambda > 0:
+        zero_mask = mask & (target_levels == 0)
+        if zero_mask.any():
+            zero_excess = (pred_real - float(zero_overprediction_threshold)).clamp_min(0.0)
+            zero_horizon_weights = horizon_weights.expand_as(pred)
+            zero_weights = zero_horizon_weights.where(
+                zero_mask, torch.zeros_like(zero_horizon_weights)
+            )
+            zero_weight_sum = zero_weights.sum().clamp_min(1)
+            zero_loss = (zero_excess.pow(2) * zero_weights).sum() / zero_weight_sum
+            total_loss = total_loss + zero_overprediction_lambda * zero_loss
+
+    if high_underprediction_lambda > 0:
+        high_under_mask = (
+            mask
+            & (target_levels >= int(high_underprediction_threshold))
+            & (pred_real < target_real)
+        )
+        if high_under_mask.any():
+            high_under_error = (target_real - pred_real).clamp_min(0.0)
+            high_under_weights = element_weights.where(
+                high_under_mask, torch.zeros_like(element_weights)
+            )
+            high_under_weight_sum = high_under_weights.sum().clamp_min(1)
+            high_under_loss = (
+                high_under_error * high_under_weights
+            ).sum() / high_under_weight_sum
+            total_loss = total_loss + high_underprediction_lambda * high_under_loss
+
     if shape_lambda > 0:
+        shape_pred_real = torch.where(mask, pred_real, torch.full_like(pred_real, float("nan")))
+        shape_target_real = torch.where(mask, target_real, torch.full_like(target_real, float("nan")))
         shape_loss = _weighted_nodewise_pearson_loss(
-            pred_real,
-            target_real,
+            shape_pred_real,
+            shape_target_real,
             eps=shape_eps,
             min_std=shape_min_std,
             weight_std=shape_weight_std,
