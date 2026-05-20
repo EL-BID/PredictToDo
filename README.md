@@ -32,8 +32,12 @@ The current project center is not only dataset preparation. The active system in
 Read these first:
 
 - [docs/README.md](docs/README.md) for the documentation index
+- [docs/system-overview.md](docs/system-overview.md) for the system boundaries and main flow
 - [docs/repository-structure.md](docs/repository-structure.md) for the code map
 - [docs/setup.md](docs/setup.md) for local environment setup
+- [docs/process-runbooks.md](docs/process-runbooks.md) for operational procedures
+- [docs/artifacts-and-contracts.md](docs/artifacts-and-contracts.md) for data/model/seed contracts
+- [docs/code-reference.md](docs/code-reference.md) for a generated function and class inventory
 - [ai-context/00-start-here.md](ai-context/00-start-here.md) for the latest AI handoff state
 
 ## Environment

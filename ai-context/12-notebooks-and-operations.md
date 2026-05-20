@@ -57,6 +57,20 @@
 - `congestion-bogota-gconvgru-20260420-142911`
 - `congestion-bogota-tgcn-20260420-143023`
 
+## SageMaker Launch Configuration To Preserve
+- Region: `us-east-1`
+- Role: `arn:aws:iam::195419001736:role/SagemakerExecutionRole`
+- Bucket: `sagemaker-congestion-bogota`
+- Image: `195419001736.dkr.ecr.us-east-1.amazonaws.com/congestion-bogota-sagemaker:temporal-features-20260331-194332`
+- EFS id: `fs-099e29197c0a3e353`
+- EFS directory: `/data/datos_procesados`
+- Subnet: `subnet-017c79447d5151efe`
+- Security groups: `sg-0962698c0c8352ddd`, `sg-03590ecb70a82d570`
+- Seed-time artifact: `s3://sagemaker-congestion-bogota/congestion-bogota/seed-time-artifacts/final_all/seed_time_bucket_rows_merged_all.parquet`
+- Previous global shape-loss line used `epochs = 2`, `batch-size = 16`, `node-batch-size = 500`, `input-seq-len = 150`, `output-seq-len = 50`, and `seed-time-bucket-target-ratios = 0.45,0.30,0.25`.
+- Previous successful global instances were `GConvGRU` on `ml.g5.4xlarge`, `GConvLSTM` on `ml.g4dn.8xlarge`, and `TGCN` on `ml.g5.8xlarge`.
+- Do not create a separate launch path unless explicitly requested. Use the existing SageMaker notebook/configuration path and update hyperparameters there.
+
 ## Current Shape-Loss Hyperparameters In The Main Notebook
 - `loss-shape-lambda = 0.05`
 - `loss-shape-min-std = 1e-3`
@@ -64,6 +78,19 @@
 - `loss-shape-weight-std = 0.75`
 - `loss-shape-weight-range = 0.25`
 - `loss-shape-weight-max = 1.0`
+
+## Current Operational Loss Hyperparameters In The Main Notebook
+- `loss-horizon-short-steps = 16`
+- `loss-horizon-mid-steps = 32`
+- `loss-horizon-short-weight = 1.5`
+- `loss-horizon-mid-weight = 1.0`
+- `loss-horizon-long-weight = 0.6`
+- `loss-zero-overprediction-lambda = 0.4`
+- `loss-zero-overprediction-threshold = 0.5`
+- `loss-high-underprediction-lambda = 0.6`
+- `loss-high-underprediction-threshold = 3`
+
+These knobs were added after the fresh dense real-time analysis showed early-horizon overprediction on true zeros and long-horizon underprediction of levels `3` and `4`. They are additive to the existing composite loss and shape loss; they do not remove any previous loss components.
 
 ## Important Operational Lesson Already Learned
 - SageMaker metric definitions have a hard limit, so metric lists must be curated.

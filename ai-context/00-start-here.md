@@ -7,6 +7,7 @@
   - sparse temporal dataset construction
   - SageMaker training for 3 main model families now actively compared (`GConvLSTM`, `GConvGRU`, `TGCN`)
   - seed-time artifact generation for better training sampling
+  - regional central/noncentral corridor retraining based on `artifacts/21 CORREDORES PRIORIZADOS.lpkx`
   - offline and real-time evaluation against dense `prediction + jams fillna(0)` universes
   - calibration and inference-traceability cleanup
 
@@ -16,9 +17,14 @@
 - Documentation index:
   - `docs/README.md`
 - Code and operations map:
+  - `docs/system-overview.md`
   - `docs/repository-structure.md`
   - `docs/training.md`
   - `docs/inference-evaluation.md`
+  - `docs/process-runbooks.md`
+  - `docs/artifacts-and-contracts.md`
+  - `docs/validation.md`
+  - `docs/code-reference.md`
 
 ## What Not To Assume
 - Do not assume the current training loop still uses the original seeded sampler only.
@@ -36,15 +42,35 @@
   - exactly one seed
   - multiple `time_idx`
   - a bucket mix close to `45% high / 30% medium / 25% low`
+- As of `2026-05-14`, there is a regional retraining line:
+  - central/principal corridor model
+  - noncentral/non-principal model
+  - start with `16-regional-corridor-retraining-2026-05-14.md`
+- As of `2026-05-18`, the best current regional candidate is `GConvGRU` for both central and noncentral.
+  - start with `17-regional-status-2026-05-18.md`
+- Also as of `2026-05-18`, minimal regional inference seed lists were recalculated:
+  - `657` central seeds
+  - `2582` noncentral seeds
+  - `3239` total seeds, down from the old global `4398`
+  - start with `19-regional-inference-seeds-2026-05-18.md`
+- As of `2026-05-20`, the sibling inference repo was updated to central-first regional execution.
+  - central model always runs first with the central seed list
+  - noncentral model runs only when `PREDICTION_RUN_NONCENTRAL=true`
+  - each model publishes only its own region according to `node_region_map.csv`
+  - start with `20-regional-inference-execution-update-2026-05-20.md`
 
 ## Default Reading Order For Any Agent
-1. `01-repository-map.md`
-2. `02-architecture-and-dataflow.md`
-3. `03-seed-time-sampling-status.md`
-4. `04-artifacts-and-locations.md`
-5. `05-decisions-and-assumptions.md`
-6. `06-current-workspace-state.md`
-7. `07-open-work-and-next-steps.md`
+1. `20-regional-inference-execution-update-2026-05-20.md` if working on serving behavior
+2. `19-regional-inference-seeds-2026-05-18.md` if working on regional inference seed handling
+3. `17-regional-status-2026-05-18.md` if working on the central/noncentral retraining line
+4. `16-regional-corridor-retraining-2026-05-14.md`
+5. `01-repository-map.md`
+6. `02-architecture-and-dataflow.md`
+7. `03-seed-time-sampling-status.md`
+8. `04-artifacts-and-locations.md`
+9. `05-decisions-and-assumptions.md`
+10. `06-current-workspace-state.md`
+11. `07-open-work-and-next-steps.md`
 
 ## Fast Task Triage
 

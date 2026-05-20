@@ -52,6 +52,13 @@
   - reconstructs city-wide predictions by averaging overlaps
 - The inference repo supports variable-edge mega-batching per seed group, which is a runtime optimization specific to serving.
 
+## Current Regional Execution Finding
+- As of 2026-05-20, regional serving in the sibling repo is central-first.
+- Regional mode uses `PREDICTION_CENTRAL_SEEDS_PATH` for the required central pass.
+- It runs the noncentral pass with `PREDICTION_NONCENTRAL_SEEDS_PATH` only when `PREDICTION_RUN_NONCENTRAL=true`.
+- Each model can use all subgraph context as input, but reconstruction filters outputs by `node_region_map.csv`.
+- See `20-regional-inference-execution-update-2026-05-20.md` for details.
+
 ## Important Behavioral Detail
 - In `PredictionService._store()` the primary Redis key stores filtered predictions with:
   - `predicted_level >= 2`

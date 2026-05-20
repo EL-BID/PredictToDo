@@ -7,11 +7,13 @@ import pickle
 import shutil
 import sys
 import tempfile
+import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
 import boto3
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.amp import GradScaler
@@ -101,25 +103,88 @@ def _log_metrics(prefix: str, metrics: dict[str, float], epoch: int, step: int) 
     logger.info("[METRIC] %s", " ".join(parts))
 
 
+def _broadcast_node_mask(node_mask: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    if target.dim() < 2:
+        raise ValueError("Node mask requires target tensors with a node dimension at dim=1.")
+    if target.size(1) != node_mask.numel():
+        raise ValueError(
+            "Node mask length does not match target node dimension: "
+            f"{node_mask.numel()} vs {target.size(1)}"
+        )
+    shape = [1] * target.dim()
+    shape[1] = node_mask.numel()
+    return node_mask.view(*shape)
+
+
+def _apply_node_mask_to_target(
+    target: torch.Tensor,
+    node_mask: torch.Tensor | None,
+) -> torch.Tensor:
+    if node_mask is None:
+        return target
+    expanded = _broadcast_node_mask(node_mask.to(device=target.device), target)
+    return target.masked_fill(~expanded, float("nan"))
+
+
+def _node_valid_mask_for_target(
+    target: torch.Tensor,
+    node_mask: torch.Tensor | None,
+) -> torch.Tensor | None:
+    if node_mask is None:
+        return None
+    return torch.broadcast_to(
+        _broadcast_node_mask(node_mask.to(device=target.device), target),
+        target.shape,
+    )
+
+
+def _masked_tensor_mse(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    node_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    mask = torch.isfinite(pred) & torch.isfinite(target)
+    valid_mask = _node_valid_mask_for_target(target, node_mask)
+    if valid_mask is not None:
+        mask = mask & valid_mask
+    if not torch.any(mask):
+        return pred.sum() * 0.0
+    return torch.nn.functional.mse_loss(pred[mask], target[mask])
+
+
 def _maybe_split_losses(
     preds: torch.Tensor,
     y_target: torch.Tensor,
     loss_fn: nn.Module,
+    node_mask: torch.Tensor | None = None,
 ) -> dict[str, float]:
     losses: dict[str, float] = {}
     if y_target.dim() == 4 and y_target.size(-1) >= 1:
         level_target = y_target[..., 0]
         if preds.shape == level_target.shape:
-            losses["loss_level"] = float(loss_fn(preds, level_target))
+            if node_mask is None:
+                losses["loss_level"] = float(loss_fn(preds, level_target))
+            else:
+                losses["loss_level"] = float(_masked_tensor_mse(preds, level_target, node_mask))
         elif preds.dim() == 4 and preds.size(-1) >= 1:
             level_pred = preds[..., 0]
             if level_pred.shape == level_target.shape:
-                losses["loss_level"] = float(loss_fn(level_pred, level_target))
+                if node_mask is None:
+                    losses["loss_level"] = float(loss_fn(level_pred, level_target))
+                else:
+                    losses["loss_level"] = float(
+                        _masked_tensor_mse(level_pred, level_target, node_mask)
+                    )
         if y_target.size(-1) >= 2 and preds.dim() == 4 and preds.size(-1) >= 2:
             vel_target = y_target[..., 1]
             vel_pred = preds[..., 1]
             if vel_pred.shape == vel_target.shape:
-                losses["loss_velocity"] = float(loss_fn(vel_pred, vel_target))
+                if node_mask is None:
+                    losses["loss_velocity"] = float(loss_fn(vel_pred, vel_target))
+                else:
+                    losses["loss_velocity"] = float(
+                        _masked_tensor_mse(vel_pred, vel_target, node_mask)
+                    )
     return losses
 
 
@@ -161,11 +226,16 @@ def _compute_operational_metrics(
     prefix: str = "val",
     num_levels: int = 6,
     level_scale: float = 1.0,
+    node_mask: torch.Tensor | None = None,
 ) -> dict[str, float]:
     pred_real, target_real = _to_real_level_space(level_pred, level_target, level_scale)
     pred = pred_real.detach().reshape(-1).float().cpu()
     target = target_real.detach().reshape(-1).float().cpu()
     finite_mask = torch.isfinite(pred) & torch.isfinite(target)
+    if node_mask is not None:
+        expanded_mask = _node_valid_mask_for_target(level_target, node_mask)
+        if expanded_mask is not None:
+            finite_mask = finite_mask & expanded_mask.detach().reshape(-1).cpu()
     pred = pred[finite_mask]
     target = target[finite_mask]
 
@@ -243,12 +313,17 @@ def _update_operational_accumulator(
     level_pred: torch.Tensor,
     level_target: torch.Tensor,
     level_scale: float = 1.0,
+    node_mask: torch.Tensor | None = None,
 ) -> None:
     num_levels = int(acc["num_levels"])
     pred_real, target_real = _to_real_level_space(level_pred, level_target, level_scale)
     pred = pred_real.detach().reshape(-1).float().cpu()
     target = target_real.detach().reshape(-1).float().cpu()
     finite_mask = torch.isfinite(pred) & torch.isfinite(target)
+    if node_mask is not None:
+        expanded_mask = _node_valid_mask_for_target(level_target, node_mask)
+        if expanded_mask is not None:
+            finite_mask = finite_mask & expanded_mask.detach().reshape(-1).cpu()
     pred = pred[finite_mask]
     target = target[finite_mask]
 
@@ -520,6 +595,60 @@ def parse_args() -> dict:
         default=0.3,
     )
     parser.add_argument(
+        "--loss-horizon-short-steps",
+        help="Number of early forecast steps that receive loss-horizon-short-weight",
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--loss-horizon-mid-steps",
+        help="Forecast steps up to this index receive loss-horizon-mid-weight after the short window",
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--loss-horizon-short-weight",
+        help="Loss multiplier for early forecast steps",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--loss-horizon-mid-weight",
+        help="Loss multiplier for middle forecast steps",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--loss-horizon-long-weight",
+        help="Loss multiplier for late forecast steps",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--loss-zero-overprediction-lambda",
+        help="Weight for penalizing predictions above threshold when the true rounded level is zero",
+        type=float,
+        default=0.0,
+    )
+    parser.add_argument(
+        "--loss-zero-overprediction-threshold",
+        help="Real-level threshold above which target-zero predictions are penalized",
+        type=float,
+        default=0.5,
+    )
+    parser.add_argument(
+        "--loss-high-underprediction-lambda",
+        help="Extra weight for underprediction when the true rounded level is high",
+        type=float,
+        default=0.0,
+    )
+    parser.add_argument(
+        "--loss-high-underprediction-threshold",
+        help="Minimum true rounded level for the extra high-underprediction penalty",
+        type=int,
+        default=3,
+    )
+    parser.add_argument(
         "--loss-shape-lambda",
         help="Weight for node-wise Pearson shape loss over the forecast horizon",
         type=float,
@@ -656,6 +785,19 @@ def parse_args() -> dict:
         help="Shuffle seed order within each seed cycle when using seed-time artifact sampling",
         type=_str2bool,
         default=True,
+    )
+    parser.add_argument(
+        "--training-region",
+        help="Region to optimize/evaluate: all, central, or noncentral",
+        type=str,
+        choices=["all", "central", "noncentral"],
+        default="all",
+    )
+    parser.add_argument(
+        "--node-region-map-path",
+        help="CSV with road_id and is_central columns for regional loss masking",
+        type=str,
+        default=None,
     )
 
     payload = vars(parser.parse_args())
@@ -798,6 +940,109 @@ def _resolve_seed_time_artifact_path(
     raise FileNotFoundError(f"Could not resolve seed-time artifact path: {artifact_path}")
 
 
+def _resolve_optional_artifact_path(
+    artifact_path: str | None,
+    train_path: Path,
+    cache_dir: Path,
+    label: str,
+) -> str | None:
+    if not artifact_path:
+        return None
+
+    artifact_str = str(artifact_path)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    if artifact_str.startswith("s3://"):
+        bucket_and_key = artifact_str[len("s3://") :]
+        bucket, key = bucket_and_key.split("/", 1)
+        local_path = cache_dir / Path(key).name
+        if not local_path.exists():
+            logger.info("Downloading %s from S3 to local cache: %s -> %s", label, artifact_str, local_path)
+            boto3.client("s3").download_file(bucket, key, str(local_path))
+        else:
+            logger.info("Using cached local %s: %s", label, local_path)
+        return str(local_path)
+
+    local_candidate = Path(artifact_str)
+    if local_candidate.exists():
+        return str(local_candidate)
+
+    train_candidate = train_path / artifact_str
+    if train_candidate.exists():
+        local_cache_path = cache_dir / train_candidate.name
+        if not local_cache_path.exists():
+            logger.info("Copying %s from train channel to local cache: %s -> %s", label, train_candidate, local_cache_path)
+            _copy_file(train_candidate, local_cache_path)
+        return str(local_cache_path)
+
+    raise FileNotFoundError(f"Could not resolve {label} path: {artifact_path}")
+
+
+def _series_to_bool(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_bool_dtype(series):
+        return series.astype(bool)
+    if pd.api.types.is_numeric_dtype(series):
+        return series.astype(int).astype(bool)
+    normalized = series.astype(str).str.strip().str.lower()
+    true_values = {"1", "true", "t", "yes", "y"}
+    false_values = {"0", "false", "f", "no", "n"}
+    invalid = normalized[~normalized.isin(true_values | false_values)]
+    if not invalid.empty:
+        raise ValueError(f"Could not parse boolean values: {sorted(invalid.unique())[:5]}")
+    return normalized.isin(true_values)
+
+
+def _build_region_node_mask(
+    region_map_path: str | None,
+    training_region: str,
+    id_to_node: dict[int, str],
+) -> tuple[torch.Tensor | None, dict]:
+    if training_region == "all":
+        return None, {"training_region": "all", "enabled": False}
+    if not region_map_path:
+        raise ValueError("--node-region-map-path is required when --training-region is central or noncentral")
+
+    region_map = pd.read_csv(region_map_path)
+    required = {"road_id", "is_central"}
+    missing = required - set(region_map.columns)
+    if missing:
+        raise ValueError(f"Region map is missing required columns: {sorted(missing)}")
+
+    region_map = region_map[["road_id", "is_central"]].copy()
+    region_map["road_id"] = region_map["road_id"].astype(str)
+    region_map["is_central"] = _series_to_bool(region_map["is_central"])
+    keep_central = training_region == "central"
+    selected_nodes = set(region_map.loc[region_map["is_central"] == keep_central, "road_id"])
+    mask_values = [str(id_to_node[idx]) in selected_nodes for idx in range(len(id_to_node))]
+    node_mask = torch.tensor(mask_values, dtype=torch.bool)
+    selected_count = int(node_mask.sum().item())
+    if selected_count <= 0:
+        raise ValueError(f"Region mask for {training_region} selected zero graph nodes")
+
+    metadata = {
+        "enabled": True,
+        "training_region": training_region,
+        "node_region_map_path": str(region_map_path),
+        "selected_nodes": selected_count,
+        "total_nodes": int(len(node_mask)),
+        "selected_fraction": float(selected_count / max(1, len(node_mask))),
+    }
+    return node_mask, metadata
+
+
+def _batch_region_node_mask(
+    batch: dict,
+    global_region_node_mask: torch.Tensor | None,
+    device: torch.device,
+) -> torch.Tensor | None:
+    if global_region_node_mask is None:
+        return None
+    if "node_indices" not in batch:
+        raise ValueError("Regional training requires node_indices in DataLoader batches")
+    node_indices = batch["node_indices"].to(dtype=torch.long)
+    return global_region_node_mask[node_indices].to(device=device)
+
+
 def cache_training_data(
     train_path: Path,
     cache_dir: Path,
@@ -936,6 +1181,13 @@ def train_model(args: dict, paths: dict) -> None:
         train_path=paths["train_root"],
         cache_dir=artifact_cache_dir,
     )
+    region_artifact_cache_dir = Path(args.get("cache_dir", "/opt/ml/input/data/cache")) / "region_artifacts"
+    args["node_region_map_path"] = _resolve_optional_artifact_path(
+        args.get("node_region_map_path"),
+        train_path=paths["train_root"],
+        cache_dir=region_artifact_cache_dir,
+        label="node region map",
+    )
     
     # Debug mode flag
     debug_batches = args.get("debug_batches", None)
@@ -975,6 +1227,15 @@ def train_model(args: dict, paths: dict) -> None:
     )
     level_scale = _get_level_scale(getattr(traffic_dataset, "target_norm_constants", None))
     logger.info("  level_metric_scale=%s", level_scale)
+    global_region_node_mask, region_training_metadata = _build_region_node_mask(
+        args.get("node_region_map_path"),
+        args.get("training_region", "all"),
+        traffic_dataset.id_to_node,
+    )
+    if global_region_node_mask is not None:
+        logger.info("Regional training enabled: %s", region_training_metadata)
+    else:
+        logger.info("Regional training disabled; optimizing all batch nodes.")
     
     # ============ 2. Split Dataset ============
     use_seeded_batches = args.get("seeded_batch_sampler", True)
@@ -1270,6 +1531,7 @@ def train_model(args: dict, paths: dict) -> None:
             x_dyn_future = batch["x_dynamic_future"].to(device)
             y_target = batch["y"].to(device)
             edge_index = batch["edge_index"].to(device)
+            node_region_mask = _batch_region_node_mask(batch, global_region_node_mask, device)
             after_transfer = time.perf_counter()
 
             if batch_idx == 0:
@@ -1303,6 +1565,13 @@ def train_model(args: dict, paths: dict) -> None:
                     logger.info(
                         "Weather check: include_weather=False dynamic_features=%s",
                         dyn_feature_dim,
+                    )
+                if node_region_mask is not None:
+                    logger.info(
+                        "First train batch regional nodes: selected=%s/%s region=%s",
+                        int(node_region_mask.sum().item()),
+                        int(node_region_mask.numel()),
+                        args.get("training_region", "all"),
                     )
 
             if sanity_checks and batch_idx == 0:
@@ -1340,6 +1609,7 @@ def train_model(args: dict, paths: dict) -> None:
                 loss = masked_mse(
                     level_pred,
                     level_target,
+                    valid_mask=_node_valid_mask_for_target(level_target, node_region_mask),
                     level_weights=level_weights,
                     level_scale=level_scale,
                     continuous_loss=args["loss_continuous_type"],
@@ -1353,6 +1623,15 @@ def train_model(args: dict, paths: dict) -> None:
                     piecewise_threshold=args["loss_piecewise_threshold"],
                     piecewise_mae_lambda=args["loss_piecewise_mae_lambda"],
                     directional_lambda=args["loss_directional_lambda"],
+                    horizon_short_steps=args["loss_horizon_short_steps"],
+                    horizon_mid_steps=args["loss_horizon_mid_steps"],
+                    horizon_short_weight=args["loss_horizon_short_weight"],
+                    horizon_mid_weight=args["loss_horizon_mid_weight"],
+                    horizon_long_weight=args["loss_horizon_long_weight"],
+                    zero_overprediction_lambda=args["loss_zero_overprediction_lambda"],
+                    zero_overprediction_threshold=args["loss_zero_overprediction_threshold"],
+                    high_underprediction_lambda=args["loss_high_underprediction_lambda"],
+                    high_underprediction_threshold=args["loss_high_underprediction_threshold"],
                     shape_lambda=args["loss_shape_lambda"],
                     shape_min_std=args["loss_shape_min_std"],
                     shape_eps=args["loss_shape_eps"],
@@ -1361,11 +1640,16 @@ def train_model(args: dict, paths: dict) -> None:
                     shape_weight_max=args["loss_shape_weight_max"],
                 )
                 if y_target.size(-1) >= 2 and preds.dim() == 4 and preds.size(-1) >= 2:
-                    loss = loss + loss_fn(preds[..., 1], y_target[..., 1])
+                    loss = loss + _masked_tensor_mse(
+                        preds[..., 1],
+                        y_target[..., 1],
+                        node_region_mask,
+                    )
             else:
                 loss = masked_mse(
                     preds,
                     y_target,
+                    valid_mask=_node_valid_mask_for_target(y_target, node_region_mask),
                     level_weights=level_weights,
                     level_scale=level_scale,
                     continuous_loss=args["loss_continuous_type"],
@@ -1379,6 +1663,15 @@ def train_model(args: dict, paths: dict) -> None:
                     piecewise_threshold=args["loss_piecewise_threshold"],
                     piecewise_mae_lambda=args["loss_piecewise_mae_lambda"],
                     directional_lambda=args["loss_directional_lambda"],
+                    horizon_short_steps=args["loss_horizon_short_steps"],
+                    horizon_mid_steps=args["loss_horizon_mid_steps"],
+                    horizon_short_weight=args["loss_horizon_short_weight"],
+                    horizon_mid_weight=args["loss_horizon_mid_weight"],
+                    horizon_long_weight=args["loss_horizon_long_weight"],
+                    zero_overprediction_lambda=args["loss_zero_overprediction_lambda"],
+                    zero_overprediction_threshold=args["loss_zero_overprediction_threshold"],
+                    high_underprediction_lambda=args["loss_high_underprediction_lambda"],
+                    high_underprediction_threshold=args["loss_high_underprediction_threshold"],
                     shape_lambda=args["loss_shape_lambda"],
                     shape_min_std=args["loss_shape_min_std"],
                     shape_eps=args["loss_shape_eps"],
@@ -1429,7 +1722,7 @@ def train_model(args: dict, paths: dict) -> None:
                     epoch_num,
                     step_num,
                 )
-            split_losses = _maybe_split_losses(preds, y_target, loss_fn)
+            split_losses = _maybe_split_losses(preds, y_target, loss_fn, node_region_mask)
             metrics = {"train_loss": float(loss)}
             metrics.update(split_losses)
             try:
@@ -1439,9 +1732,14 @@ def train_model(args: dict, paths: dict) -> None:
                     level_pred_metrics,
                     level_target_metrics,
                     level_scale=level_scale,
+                    node_mask=node_region_mask,
                 )
                 train_probe_level_preds.append(level_pred_metrics.detach().cpu())
-                train_probe_level_targets.append(level_target_metrics.detach().cpu())
+                train_probe_target = _apply_node_mask_to_target(
+                    level_target_metrics,
+                    node_region_mask,
+                )
+                train_probe_level_targets.append(train_probe_target.detach().cpu())
             except ValueError:
                 pass
             _log_metrics("train", metrics, epoch_num, step_num)
@@ -1592,6 +1890,7 @@ def train_model(args: dict, paths: dict) -> None:
                 x_dyn_future = batch["x_dynamic_future"].to(device)
                 y_target = batch["y"].to(device)
                 edge_index = batch["edge_index"].to(device)
+                node_region_mask = _batch_region_node_mask(batch, global_region_node_mask, device)
 
                 if sanity_checks and val_idx == 0:
                     for name, tensor in [
@@ -1623,6 +1922,7 @@ def train_model(args: dict, paths: dict) -> None:
                     loss = masked_mse(
                         level_pred,
                         level_target,
+                        valid_mask=_node_valid_mask_for_target(level_target, node_region_mask),
                         level_weights=level_weights,
                         level_scale=level_scale,
                         continuous_loss=args["loss_continuous_type"],
@@ -1636,6 +1936,15 @@ def train_model(args: dict, paths: dict) -> None:
                         piecewise_threshold=args["loss_piecewise_threshold"],
                         piecewise_mae_lambda=args["loss_piecewise_mae_lambda"],
                         directional_lambda=args["loss_directional_lambda"],
+                        horizon_short_steps=args["loss_horizon_short_steps"],
+                        horizon_mid_steps=args["loss_horizon_mid_steps"],
+                        horizon_short_weight=args["loss_horizon_short_weight"],
+                        horizon_mid_weight=args["loss_horizon_mid_weight"],
+                        horizon_long_weight=args["loss_horizon_long_weight"],
+                        zero_overprediction_lambda=args["loss_zero_overprediction_lambda"],
+                        zero_overprediction_threshold=args["loss_zero_overprediction_threshold"],
+                        high_underprediction_lambda=args["loss_high_underprediction_lambda"],
+                        high_underprediction_threshold=args["loss_high_underprediction_threshold"],
                         shape_lambda=args["loss_shape_lambda"],
                         shape_min_std=args["loss_shape_min_std"],
                         shape_eps=args["loss_shape_eps"],
@@ -1644,11 +1953,16 @@ def train_model(args: dict, paths: dict) -> None:
                         shape_weight_max=args["loss_shape_weight_max"],
                     )
                     if y_target.size(-1) >= 2 and preds.dim() == 4 and preds.size(-1) >= 2:
-                        loss = loss + loss_fn(preds[..., 1], y_target[..., 1])
+                        loss = loss + _masked_tensor_mse(
+                            preds[..., 1],
+                            y_target[..., 1],
+                            node_region_mask,
+                        )
                 else:
                     loss = masked_mse(
                         preds,
                         y_target,
+                        valid_mask=_node_valid_mask_for_target(y_target, node_region_mask),
                         level_weights=level_weights,
                         level_scale=level_scale,
                         continuous_loss=args["loss_continuous_type"],
@@ -1662,6 +1976,15 @@ def train_model(args: dict, paths: dict) -> None:
                         piecewise_threshold=args["loss_piecewise_threshold"],
                         piecewise_mae_lambda=args["loss_piecewise_mae_lambda"],
                         directional_lambda=args["loss_directional_lambda"],
+                        horizon_short_steps=args["loss_horizon_short_steps"],
+                        horizon_mid_steps=args["loss_horizon_mid_steps"],
+                        horizon_short_weight=args["loss_horizon_short_weight"],
+                        horizon_mid_weight=args["loss_horizon_mid_weight"],
+                        horizon_long_weight=args["loss_horizon_long_weight"],
+                        zero_overprediction_lambda=args["loss_zero_overprediction_lambda"],
+                        zero_overprediction_threshold=args["loss_zero_overprediction_threshold"],
+                        high_underprediction_lambda=args["loss_high_underprediction_lambda"],
+                        high_underprediction_threshold=args["loss_high_underprediction_threshold"],
                         shape_lambda=args["loss_shape_lambda"],
                         shape_min_std=args["loss_shape_min_std"],
                         shape_eps=args["loss_shape_eps"],
@@ -1681,12 +2004,13 @@ def train_model(args: dict, paths: dict) -> None:
                         level_pred,
                         level_target,
                         level_scale=level_scale,
+                        node_mask=node_region_mask,
                     )
                 except ValueError:
                     pass
 
                 step_num = epoch * epoch_val_steps + val_idx + 1
-                split_losses = _maybe_split_losses(preds, y_target, loss_fn)
+                split_losses = _maybe_split_losses(preds, y_target, loss_fn, node_region_mask)
                 metrics = {"val_loss": float(loss)}
                 metrics.update({f"val_{k}": v for k, v in split_losses.items()})
                 _log_metrics("val", metrics, epoch_num, step_num)
