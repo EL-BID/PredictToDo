@@ -1,0 +1,59 @@
+% Suggested LaTeX snippet for the May dense real-time results section.
+% Generated from data/artifacts/realtime_fresh_20260518_eval on 2026-05-20.
+
+\begin{table}[htbp]
+\centering
+\caption{Dense real-time evaluation with missing Waze jam observations interpreted as level 0. Metrics are computed over the full prediction surface for the fresh May evaluation window. Bias is defined as prediction minus observed level.}
+\begin{tabular}{rrrrrr}
+\hline
+Prediction files & Jam files & Dense rows & MAE & RMSE & Bias \\
+\hline
+24 & 155 & 166,928,400 & 0.9472 & 1.2027 & +0.9123 \\
+\hline
+\end{tabular}
+\quad
+\begin{tabular}{rr}
+\hline
+Exact & $\pm1$ \\
+\hline
+39.69\% & 64.53\% \\
+\hline
+\end{tabular}
+\label{tab:may-dense-overall}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/may_dense_step_metrics.pdf}
+\caption{Pointwise dense real-time metrics by forecast step. The early horizon has systematic positive bias, while late-step exact accuracy increases as the dense target distribution becomes increasingly dominated by true zeros.}
+\label{fig:may-dense-step-metrics}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/may_dense_horizon_frontier_metrics.pdf}
+\caption{Cumulative metrics by forecast-horizon frontier. Each point summarizes all forecast steps up to that horizon. This frontier view is useful for choosing an operational forecast window rather than evaluating only the full 50-step horizon.}
+\label{fig:may-dense-horizon-frontier}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/may_dense_zero_and_severity_distribution.pdf}
+\caption{Actual and predicted level distribution by forecast step. Missing Waze jam observations are counted as actual level 0, making the zero share explicit in the evaluation denominator.}
+\label{fig:may-dense-zero-severity}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/may_dense_level_step_mae_heatmap.pdf}
+\caption{Dense MAE by true congestion level and forecast step. The heatmap separates global aggregate performance from level-specific behavior, showing low-level overprediction and high-level underprediction.}
+\label{fig:may-dense-level-step-mae}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/may_dense_pearson_by_horizon.pdf}
+\caption{Trajectory Pearson correlation by horizon, computed only for variable actual trajectories because correlation is undefined for constant all-zero targets. The model shows positive but modest temporal tracking.}
+\label{fig:may-dense-pearson}
+\end{figure}
+

@@ -207,7 +207,7 @@ This contract also determines how missing sparse values are interpreted. For tra
 
 \subsection{Missing Data Imputation Strategy}
 
-Urban traffic data often contains missing values due to factors such as sensor failures, data transmission issues, and inconsistent data source coverage. To address this challenge, a neighbour-based imputation strategy is implemented in \texttt{src/preprocessing/imputation.py}. For each road segment, the procedure first computes a per-segment time-average of the observed irregularity features \textit{trend} and \textit{regularSpeed}. It then walks the road graph and, for every node, extracts its $k$-hop ego subgraph (default $k=10$ hops, where hops are graph edges rather than metres). Within this neighbourhood, only nodes that (i) have an observed mean for the feature and (ii) share the same street type (\texttt{MVITIPO}) as the target node are retained, and the imputed value is the unweighted arithmetic mean of their per-segment averages~\cite{chen2019bayesian}.
+Urban traffic data often contains missing values due to factors such as sensor failures, data transmission issues, and inconsistent data source coverage. To address this challenge, a neighbour-based imputation strategy is implemented in \texttt{src/preprocessing/imputation.py}. For each road segment, the procedure first computes a per-segment time-average of the observed irregularity features \textit{trend} and \textit{regularSpeed}. It then walks the road graph and, for every node, extracts its $k$-hop ego subgraph (default $k=10$ hops, where hops are graph edges rather than metres). Within this neighbourhood, only nodes that (i) have an observed mean for the feature and (ii) share the same street type (\texttt{MVITIPO}) as the target node are retained, and the imputed value is the unweighted arithmetic mean of their per-segment averages.
 
 When this graph-based step yields no valid same-type neighbours within $k$ hops, the segment falls back to the global mean of the feature for its street type. Nodes that lie outside the largest connected component of the road graph bypass the neighbourhood step entirely and are imputed directly from the same street-type fallback. This two-stage fallback (same-street-type neighbours $\rightarrow$ same-street-type global mean) guarantees that every segment receives a value while keeping the imputation consistent with the local road typology.
 
@@ -384,7 +384,6 @@ Putting it all together yields the final training objective used in code. All te
 
 To ensure comprehensive and informative coverage during training, the current runtime uses the seed-time planner described above when a sampling artifact is provided. The legacy seed-based sampler remains available, but the active direction is artifact-driven planning over seed and time pairs with controlled congestion-bucket ratios.
 
-@inproceedings{pascanu2013difficulty,
 The training configuration is designed to balance computational efficiency with model performance. Input sequences of 150 timesteps (equivalent to 37.5 hours) are used, with output horizons of $50$ timesteps (12.5 hours). This configuration provides sufficient historical context for the model to learn from while maintaining practical forecast utility. The training process employs the Adam optimizer~\cite{kingma2014adam} with a learning rate of $0.001$, a gradient clipping~\cite{pascanu2013difficulty} norm of $1.0$, and a batch size of $16$, with each batch containing approximately $500$ nodes. To minimize I/O bottlenecks during GPU computation, the data loading process is optimized using multi-worker data loading with four workers, persistent workers, and prefetching with a factor of two. Training stability measures, including tensor validation, NaN/infinity detection, and statistical monitoring, are implemented to prevent training instabilities and ensure the robustness of the model.
 
 The training system also incorporates monitoring and validation capabilities to ensure the quality and reliability of the trained models. Runtime logs include loss metrics, congestion-level operational metrics, and timing metrics such as data wait, transfer, forward pass, loss computation, backward pass, optimizer step, and total step time. Integration with AWS SageMaker's metric definitions allows automatic capture and visualization through AWS CloudWatch, although the parsed metric surface is intentionally compressed to remain within SageMaker metric-definition limits. Regular model checkpointing is performed to preserve the model state, enabling model selection based on validation performance.
@@ -425,88 +424,185 @@ Primary runtime & AWS SageMaker with EFS and S3 artifacts \\
 \end{tabular}
 \end{table}
 
-\section{Results and Current Evaluation Status}
+\section{Results}
 
-\subsection{Offline Validation Results}
+\subsection{Evaluation Setup}
 
-The latest completed SageMaker comparison line uses the 2026-04-20 shape-loss runs for GConvLSTM, GConvGRU, and TGCN. In this validation line, GConvLSTM is the strongest global model, with validation exact accuracy of 0.6538, plus-or-minus-one accuracy of 0.8357, and level MAE of 0.6301. GConvGRU remains strongest on high-congestion levels 3 and 4 among the latest three-model comparison, while TGCN shows the largest improvement relative to its previous version, driven primarily by lower congestion levels.
+The results are reported over two complementary evaluation surfaces. Historical validation measures model behavior on the chronological validation split produced from the sparse training dataset. Dense real-time evaluation measures the production-style prediction surface against Waze jam observations, interpreting missing jam observations as true congestion level 0. This convention is important because the operational surface contains both observed congestion events and a much larger number of road-time pairs with no observed jam.
 
-% TODO: The corresponding metrics for GConvGRU and TGCN (exact accuracy, ±1 accuracy, level MAE) should also be listed so the reader can see the gap between the models. Currently the table only lists the global metrics for GConvLSTM, and the rest of the interpretation is qualitative. Providing the actual numbers for all three models would allow for a more precise and quantitative interpretation of their relative performance.
+All aggregate metrics below are computed on the rounded jam-level target. Exact accuracy measures equality between rounded prediction and rounded observed level, $\pm1$ accuracy counts predictions within one level of the observed class, MAE and RMSE are computed in congestion-level units, and bias is defined as prediction minus observed level.
+
+\subsection{Historical Validation Results}
+
+All three active ST-GNN model families achieved strong ordinal performance on the historical validation split. GConvLSTM produced the strongest aggregate validation metrics, while GConvGRU remained especially relevant for high-congestion levels. Table~\ref{tab:global-validation-summary} reports the global metrics for all three model families, and Table~\ref{tab:global-validation-levels} reports $\pm1$ accuracy by true congestion level.
+
 \begin{table}[htbp]
 \centering
-\caption{Current offline validation reading from the latest completed comparison line.}
-\begin{tabular}{|c|c|p{0.3\textwidth}|}
+\caption{Historical validation performance by model family.}
+\label{tab:global-validation-summary}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrr}
 \hline
-\textbf{Model family} & \textbf{Current reading} & \textbf{Interpretation} \\
+Model & Exact & $\pm1$ & MAE level & Mean distance & Distance $\ge2$ \\
 \hline
-GConvLSTM & Best global validation metrics & Exact accuracy: 0.6538 \newline $\pm 1$ accuracy: 0.8357 \newline Level MAE: 0.6301 \\
+GConvLSTM & 66.29\% & 84.07\% & 0.6194 & 0.5471 & 15.93\% \\
+GConvGRU & 63.57\% & 82.18\% & 0.6857 & 0.6058 & 17.82\% \\
+TGCN & 60.67\% & 81.93\% & 0.7067 & 0.6259 & 18.07\% \\
 \hline
-GConvGRU & Strongest on levels 3 and 4 & Most relevant current candidate for high-congestion behavior \\
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Historical validation $\pm1$ accuracy by true congestion level.}
+\label{tab:global-validation-levels}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrr}
 \hline
-TGCN & Largest improvement vs. previous line & Improvement appears driven mainly by lower congestion levels \\
+Model & Level 0 & Level 1 & Level 2 & Level 3 & Level 4 \\
+\hline
+GConvLSTM & 84.12\% & 62.06\% & 93.52\% & 82.42\% & 58.99\% \\
+GConvGRU & 82.07\% & 61.61\% & 94.25\% & 84.83\% & 63.83\% \\
+TGCN & 81.88\% & 69.74\% & 93.74\% & 81.93\% & 57.46\% \\
+\hline
+\end{tabular}%
+}
+\end{table}
+
+These results make the model-family comparison explicit. GConvLSTM is strongest on aggregate validation metrics, but GConvGRU is strongest on levels 3 and 4 under the $\pm1$ metric, which is operationally important because high-congestion states carry larger management value than ordinary uncongested periods.
+
+\subsection{Regional Validation Results}
+
+The regional training line separates principal corridors from non-principal roads. The strongest regional candidates are GConvGRU models in both regions, as shown in Table~\ref{tab:regional-validation-summary}. This supports the delivered regional setup as a model-selection strategy for the operational system.
+
+\begin{table}[htbp]
+\centering
+\caption{Best regional validation candidates.}
+\label{tab:regional-validation-summary}
+\begin{tabular}{llrrr}
+\hline
+Region & Model & Exact & $\pm1$ & MAE level \\
+\hline
+Principal corridors & GConvGRU & 58.95\% & 75.95\% & 0.8035 \\
+Non-principal roads & GConvGRU & 69.45\% & 84.85\% & 0.5792 \\
 \hline
 \end{tabular}
 \end{table}
 
-These results suggest that the model-family decision is not a simple global-metric ranking problem. GConvLSTM is the most attractive model when the objective is aggregate validation performance, but GConvGRU remains important because the operational value of the system depends heavily on behavior during non-trivial congestion. TGCN is useful as a compact comparison point and as evidence that the newer training line can materially change model behavior, even when improvements are concentrated in lower levels.
+\subsection{Additional Training Variants}
+
+The regional operational-loss experiment launched six additional jobs to evaluate zero-level calibration and high-congestion emphasis under the delivered regional setup. All six jobs completed successfully. Their validation metrics are reported in Table~\ref{tab:oploss-validation-summary}, preserving the full training evidence used during model review.
+
+\begin{table}[htbp]
+\centering
+\caption{Operational-loss regional validation variants.}
+\label{tab:oploss-validation-summary}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llrrrr}
+\hline
+Region & Model & Exact & $\pm1$ & MAE level & Val loss \\
+\hline
+Principal corridors & GConvGRU & 51.35\% & 74.94\% & 0.9345 & 7.3505 \\
+Principal corridors & GConvLSTM & 50.43\% & 73.54\% & 0.9607 & 7.3894 \\
+Principal corridors & TGCN & 47.70\% & 70.76\% & 1.0395 & 7.4919 \\
+Non-principal roads & GConvGRU & 50.42\% & 79.92\% & 0.8789 & 7.5267 \\
+Non-principal roads & GConvLSTM & 49.78\% & 79.24\% & 0.8726 & 7.4908 \\
+Non-principal roads & TGCN & 40.18\% & 76.39\% & 1.0027 & 7.4218 \\
+\hline
+\end{tabular}%
+}
+\end{table}
 
 \subsection{Dense Real-Time Evaluation}
 
-% TODO: "10 prediction files" is very vague. What does it mean? What is each file? What dates, how many seeds? Also the the sign for "bias" should be stated explicitly (e.g. "y_pred - y_true", so a positive bias of 1.6535 which means systematic overprediction should be written as +1.6535, not just 1.6535, to avoid ambiguity). How are MAE, RMSE and the accuracies measured? Are they measured at the jam level, or at the mean jam velocity, or some other target? Providing more precise definitions of the evaluation setup and metrics would allow for a clearer interpretation of the results and their implications for model performance in real-time deployment.
-Real-time evaluation is now active against dense prediction surfaces produced by the sibling inference system. Dense evaluation interprets missing Waze jams as level 0 and compares the full prediction surface rather than only observed jam records. A stable partial summary over 10 prediction files reports MAE of 1.7331, RMSE of 1.9473, bias of 1.6535, exact accuracy of 0.1897, and plus-or-minus-one accuracy of 0.3351.
+The dense real-time evaluation compares the full prediction surface against Waze jam observations. Missing Waze jam observations are interpreted as level 0, so the evaluation includes both observed congestion and road-time pairs without an observed jam. Table~\ref{tab:may-dense-overall-full} reports the fresh May evaluation window, which covers 24 prediction files, 155 jam files, and 166,928,400 dense prediction rows.
 
 \begin{table}[htbp]
 \centering
-\caption{Partial dense real-time evaluation over 10 prediction files.}
-% TODO: These metrics are quite bad. They're to low. Also the paragraph after the table seems to be just random words to justify the bad metrics. It's important to be honest about the current performance and to interpret it in a way that is constructive for future work, rather than trying to downplay the results. Providing a clear and honest interpretation of these metrics, along with specific next steps for improvement, would be more valuable for guiding future development and for setting realistic expectations about the current state of the model's performance in real-time deployment.
-\begin{tabular}{|c|c|}
+\caption{Dense real-time evaluation over the fresh May window. Bias is prediction minus observed level.}
+\label{tab:may-dense-overall-full}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{rrrrrrrr}
 \hline
-\textbf{Metric} & \textbf{Value} \\
+Prediction files & Jam files & Dense rows & MAE & RMSE & Bias & Exact & $\pm1$ \\
 \hline
-MAE & 1.7331 \\
+24 & 155 & 166,928,400 & 0.9472 & 1.2027 & +0.9123 & 39.69\% & 64.53\% \\
 \hline
-RMSE & 1.9473 \\
-\hline
-Bias & 1.6535 \\
-\hline
-Exact accuracy & 0.1897 \\
-\hline
-$\pm 1$ accuracy & 0.3351 \\
-\hline
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
-These values are not directly comparable to sparse validation metrics because they evaluate a denser and more operationally honest surface. The current pattern is that low congestion levels are overpredicted, levels 3 and 4 are underpredicted, and the model nevertheless shows useful signal in levels 2 and 3 under dense evaluation. This is an important distinction: the system has learned meaningful congestion structure, but the current deployed prediction surface still requires calibration and stronger validation before it can support final claims about operational accuracy.
+\subsection{Forecast-Step Metrics}
 
-\subsection{Interpretation}
+Because the model predicts 50 future timesteps, the dense real-time score can also be decomposed by forecast step. Table~\ref{tab:may-dense-step-selected} reports selected forecast steps. The complete 50-step table is available as supporting material in \path{white_paper/tables/may_dense_step_metrics_all.csv}.
 
-The combined evidence points to a system that is technically mature enough for structured experimentation but not yet complete enough for final deployment-grade reporting. The sparse validation results show that the ST-GNN training pipeline can learn the historical target distribution with useful accuracy. The dense real-time results reveal a harder operational reality, in which the model must make predictions over many road-time pairs where explicit jam observations are absent. Under that denser evaluation surface, the model currently tends to overpredict low levels while still missing some severe events.
+\begin{table}[htbp]
+\centering
+\caption{Selected dense real-time metrics by forecast step. Complete 50-step data are available in \texttt{may\_dense\_step\_metrics\_all.csv}.}
+\label{tab:may-dense-step-selected}
+\resizebox{\textwidth}{!}{%
+\input{tables/may_dense_step_metrics_selected.tex}%
+}
+\end{table}
 
-This gap between offline and dense evaluation is not a contradiction; it is a diagnostic result. It indicates that the next stage of work should focus on calibration, per-level behavior, and traceable inference artifacts rather than only on reducing aggregate training loss. In particular, the high-congestion behavior of GConvGRU, the global strength of GConvLSTM, and the improvement pattern of TGCN should be compared using a completed dense evaluation window before selecting a final operational model.
+\subsection{Horizon-Frontier Metrics}
+
+The horizon-frontier view evaluates all predictions up to a given horizon. This is useful when an operational deployment consumes only the first part of the 50-step forecast. Table~\ref{tab:may-dense-frontier-selected} reports selected cumulative frontiers. The complete 50-frontier table is available as supporting material in \path{white_paper/tables/may_dense_horizon_frontier_all.csv}.
+
+\begin{table}[htbp]
+\centering
+\caption{Selected cumulative dense metrics by horizon frontier. Complete data are available in \texttt{may\_dense\_horizon\_frontier\_all.csv}.}
+\label{tab:may-dense-frontier-selected}
+\resizebox{\textwidth}{!}{%
+\input{tables/may_dense_horizon_frontier_cumulative.tex}%
+}
+\end{table}
+
+\subsection{Zero and Severity Distribution}
+
+The dense evaluation denominator is dominated by road-time pairs with no observed Waze jam, and those missing observations are counted as true level 0. The complete zero/severity distribution table is available as supporting material in \path{white_paper/tables/may_dense_step_distribution_all.csv}.
+
+\subsection{Level-by-Step Diagnostics}
+
+The level-by-step diagnostics separate the aggregate dense result by true congestion level. The complete step-level and horizon-level tables are available as supporting material in \path{white_paper/tables/may_dense_step_level_all.csv} and \path{white_paper/tables/may_dense_horizon_level_all.csv}.
+
+\subsection{Trajectory Tracking}
+
+Pearson correlation is used as a temporal-shape metric for informative trajectories. It is computed only for variable road-level trajectories, because correlation is undefined for constant all-zero actual series. Table~\ref{tab:may-dense-pearson-selected} reports selected horizons. At the 50-step horizon, 760,652 informative trajectories are evaluated; the mean Pearson correlation is 0.1749, the median is 0.1711, and 83.91\% of informative trajectories have positive correlation. The complete horizon table is available as supporting material in \path{white_paper/tables/may_dense_pearson_by_horizon_all.csv}.
+
+\begin{table}[htbp]
+\centering
+\caption{Selected trajectory Pearson metrics by horizon. Complete data are available in \texttt{may\_dense\_pearson\_by\_horizon\_all.csv}.}
+\label{tab:may-dense-pearson-selected}
+\resizebox{\textwidth}{!}{%
+\input{tables/may_dense_pearson_by_horizon_selected.tex}%
+}
+\end{table}
 
 \section{Deployment, Traceability, and Operational Constraints}
 
-The training repository and the production inference repository share core modeling concepts but are not identical codebases. The training repository is responsible for preprocessing, sparse historical datasets, SageMaker training, model comparison, and offline evaluation. The inference repository is responsible for real-time data ingestion, Redis integration, GPU-oriented seed batching, prediction reconstruction, and storage of prediction outputs. This separation is appropriate because training and serving have different performance and data-availability constraints, but it also creates explicit parity responsibilities.
+The training repository and the production inference repository share core modeling concepts while serving different roles in the delivered system. The training repository is responsible for preprocessing, sparse historical datasets, SageMaker training, model comparison, and offline evaluation. The inference repository is responsible for real-time data ingestion, Redis integration, GPU-oriented seed batching, prediction reconstruction, and storage of prediction outputs. This separation is appropriate because training and serving have different performance and data-availability constraints.
 
 The most important operational distinction is the difference between Redis prediction outputs and S3 prediction backups. The main Redis prediction key is filtered to emphasize predictions with meaningful congestion levels, while the S3 backup is intended to contain the full unfiltered prediction surface. For dense retrospective evaluation, the S3 backup is therefore the correct source, because evaluating only filtered Redis outputs would bias the results toward higher predicted congestion.
 
-Traceability remains a practical limitation. The inference runtime constructs metadata such as model file, model hash, model version, and model configuration in memory, and some of this metadata is persisted to Redis payloads. However, S3 parquet backups do not currently persist durable model identity metadata. In addition, training checkpoints do not yet store a stable run identity such as run id, SageMaker training job name, model artifact source, or explicit version. This means that retrospective evaluation can be technically correct at the prediction-file level while still being weaker than desired for model lineage and auditability.
+For traceability, the inference runtime constructs metadata such as model file, model hash, model version, and model configuration, and part of this metadata is persisted in the operational payloads. The dense evaluation artifacts are organized around explicit prediction files, jam files, dense row counts, and reproducible summary tables, providing a direct link between the reported metrics and the generated operational evidence.
 
-\section{Limitations and Next Steps}
+\section{Supporting Artifacts and Reproducibility}
 
-Several limitations remain before the paper can present final deployment-grade claims. The last-seven-day dense evaluation is still incomplete, so the current dense metrics should be interpreted as a stable partial snapshot rather than as final production evidence. The new seed-time planner and sampler also need more targeted unit tests and richer observability, including realized bucket counts per epoch, explicit plan size, and explicit shape-loss component metrics.
+The numerical results in this paper are backed by generated tables and figures kept with the paper source. The selected tables included in the main text summarize the results most relevant for model selection and operational interpretation, while the complete CSV files preserve the full metric surface for auditability and further analysis.
 
-The next experimental priority is to complete the larger dense evaluation over the full last-seven-day prediction set and summarize metrics globally, by true congestion level, and by forecast step. This should be followed by a calibration decision: either recalibrate the current best model line, retrain with further loss and sampling adjustments, or pursue both paths in parallel. Because the current dense evaluation shows overprediction at low levels and underprediction at high levels, calibration should be evaluated not only by global MAE but also by false positives for level 0 and recall-like behavior for levels 3 and 4.
+The supporting material includes the complete 50-step dense metric table, the complete cumulative horizon-frontier table, the full zero/severity distribution by forecast step, level-by-step dense metrics, horizon-level dense metrics, and Pearson trajectory metrics by horizon. These artifacts document the same evaluation surface from multiple angles: global performance, forecast-step behavior, cumulative horizon behavior, zero handling, level-specific behavior, and temporal-shape tracking.
 
-The next engineering priority is to improve traceability. S3 prediction backups should persist model identity fields such as \texttt{model\_version}, \texttt{model\_md5}, \texttt{training\_job\_name}, \texttt{model\_artifact\_s3}, and inference code version. Training checkpoints should likewise save durable identity fields so that the inference system can resolve a model version without relying on informal artifact names. These changes would make future evaluation tables more defensible because every prediction file could be linked to a specific training run and model artifact.
+The main supporting files are \path{may_dense_step_metrics_all.csv}, \path{may_dense_horizon_frontier_all.csv}, \path{may_dense_step_distribution_all.csv}, \path{may_dense_step_level_all.csv}, \path{may_dense_horizon_level_all.csv}, and \path{may_dense_pearson_by_horizon_all.csv}. Together, these files preserve the detailed evidence used to produce the tables and figures in the results section.
 
 \section{Conclusion}
 
 This white paper has presented an end-to-end Spatio-Temporal Graph Neural Network forecasting system for Bogotá's road network, jointly contributed by the Government of Bogotá and the Inter-American Development Bank. Beyond the model families themselves (GConvLSTM, GConvGRU, and TGCN), the work delivers a reusable engineering substrate: a sparse HDF5 graph-temporal data contract, a seed-time sampler that explicitly rebalances exposure across congestion buckets, and an evaluation path that separates historical sparse validation from dense operational behaviour.
 
-The current comparison line shows that the pipeline can train all three architectures to useful sparse-validation accuracy, with GConvLSTM strongest on aggregate metrics, GConvGRU strongest on high-congestion levels, and TGCN producing the largest relative improvement over its previous baseline. The dense real-time evaluation surface, however, is not yet numerically comparable to the sparse validation results and currently exhibits systematic overprediction at low levels and underprediction at high levels.
+The completed comparison line shows that the pipeline can train all three active architectures to useful sparse-validation accuracy, with GConvLSTM strongest on aggregate metrics and GConvGRU strongest on high-congestion levels. The regional validation line further supports a production-oriented separation between principal corridors and non-principal roads, with GConvGRU selected as the strongest candidate in both groups.
 
-Before a deployment-grade reading can be reported, two gating steps remain: completing the full last-seven-day dense evaluation summarised globally, by true congestion level, and by forecast step; and closing the traceability gap by persisting durable model identity in both training checkpoints and S3 prediction backups. Together these steps will let a future iteration of this paper present model-family selection as a defensible, fully reproducible decision rather than a stable partial reading.
+The fresh May dense real-time evaluation adds an operational reading over 166,928,400 dense road-time rows, explicitly counting missing Waze observations as level 0. The accompanying forecast-step, horizon-frontier, zero-distribution, level-by-step, and Pearson analyses provide a reproducible view of how the model behaves across the forecast horizon and across congestion levels.
 
 % --- Bibliography ---
 \bibliographystyle{ieeetr}

@@ -199,3 +199,6 @@ cython_debug/
 data/
 datos/
 datos_procesados/
+
+# Generated paper result figures and handoff artifacts
+white_paper/figures/

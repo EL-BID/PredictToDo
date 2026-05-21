@@ -1,0 +1,177 @@
+% Comprehensive results-section snippet.
+% Generated to keep the full set of validation and dense real-time diagnostics visible.
+
+\subsection{Historical Validation Results}
+
+All three active ST-GNN model families achieved strong ordinal performance on the historical validation split. Table~\ref{tab:global-validation-summary} reports the aggregate validation metrics, while Table~\ref{tab:global-validation-levels} reports per-level $\pm1$ accuracy. These metrics evaluate the historical sparse validation target and should be interpreted separately from the dense real-time evaluation that follows.
+
+\begin{table}[htbp]
+\centering
+\caption{Historical validation performance by model family.}
+\label{tab:global-validation-summary}
+\begin{tabular}{lrrrrr}
+\hline
+Model & Exact & $\pm1$ & MAE level & Mean distance & Distance $\ge2$ \\
+\hline
+GConvLSTM & 66.29\% & 84.07\% & 0.6194 & 0.5471 & 15.93\% \\
+GConvGRU & 63.57\% & 82.18\% & 0.6857 & 0.6058 & 17.82\% \\
+TGCN & 60.67\% & 81.93\% & 0.7067 & 0.6259 & 18.07\% \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Historical validation $\pm1$ accuracy by true congestion level.}
+\label{tab:global-validation-levels}
+\begin{tabular}{lrrrrr}
+\hline
+Model & Level 0 & Level 1 & Level 2 & Level 3 & Level 4 \\
+\hline
+GConvLSTM & 84.12\% & 62.06\% & 93.52\% & 82.42\% & 58.99\% \\
+GConvGRU & 82.07\% & 61.61\% & 94.25\% & 84.83\% & 63.83\% \\
+TGCN & 81.88\% & 69.74\% & 93.74\% & 81.93\% & 57.46\% \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Regional Validation Results}
+
+The regional training line separates principal corridors from non-principal roads. The strongest regional candidates are GConvGRU models in both regions, as shown in Table~\ref{tab:regional-validation-summary}. This supports the delivered regional setup as a model family selection strategy for the operational system.
+
+\begin{table}[htbp]
+\centering
+\caption{Best regional validation candidates.}
+\label{tab:regional-validation-summary}
+\begin{tabular}{llrrr}
+\hline
+Region & Model & Exact & $\pm1$ & MAE level \\
+\hline
+Principal corridors & GConvGRU & 58.95\% & 75.95\% & 0.8035 \\
+Non-principal roads & GConvGRU & 69.45\% & 84.85\% & 0.5792 \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Operational-Loss Diagnostic Runs}
+
+The operational-loss regional experiment targeted two dense real-time behaviors observed during evaluation: false positives on true level-0 road-time pairs and underprediction of high congestion levels. All six diagnostic jobs completed successfully. Their validation metrics are reported in Table~\ref{tab:oploss-validation-summary}. The table is included for completeness because it documents the full experimental path; these runs are interpreted as diagnostic rather than as the selected final model line.
+
+\begin{table}[htbp]
+\centering
+\caption{Operational-loss regional diagnostic validation results.}
+\label{tab:oploss-validation-summary}
+\begin{tabular}{llrrrr}
+\hline
+Region & Model & Exact & $\pm1$ & MAE level & Val loss \\
+\hline
+Principal corridors & GConvGRU & 51.35\% & 74.94\% & 0.9345 & 7.3505 \\
+Principal corridors & GConvLSTM & 50.43\% & 73.54\% & 0.9607 & 7.3894 \\
+Principal corridors & TGCN & 47.70\% & 70.76\% & 1.0395 & 7.4919 \\
+Non-principal roads & GConvGRU & 50.42\% & 79.92\% & 0.8789 & 7.5267 \\
+Non-principal roads & GConvLSTM & 49.78\% & 79.24\% & 0.8726 & 7.4908 \\
+Non-principal roads & TGCN & 40.18\% & 76.39\% & 1.0027 & 7.4218 \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Dense Real-Time Evaluation}
+
+The dense real-time evaluation compares the full prediction surface against Waze jam observations. Missing Waze jam observations are interpreted as level 0, so the evaluation includes both observed congestion and the much larger set of road-time pairs without an observed jam. This is the most conservative operational scoring surface in the current report.
+
+\begin{table}[htbp]
+\centering
+\caption{Dense real-time evaluation over the fresh May window. Bias is prediction minus observed level.}
+\label{tab:may-dense-overall-full}
+\begin{tabular}{rrrrrrrr}
+\hline
+Prediction files & Jam files & Dense rows & MAE & RMSE & Bias & Exact & $\pm1$ \\
+\hline
+24 & 155 & 166,928,400 & 0.9472 & 1.2027 & +0.9123 & 39.69\% & 64.53\% \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Forecast-Step Metrics}
+
+Table~\ref{tab:may-dense-step-selected} reports selected forecast steps, while the complete 50-step table is stored in \texttt{white\_paper/tables/may\_dense\_step\_metrics\_all.csv}. Figure~\ref{fig:may-dense-step-metrics-full} shows the full metric curves.
+
+\begin{table}[htbp]
+\centering
+\caption{Selected dense real-time metrics by forecast step. Complete 50-step data are available in \texttt{may\_dense\_step\_metrics\_all.csv}.}
+\label{tab:may-dense-step-selected}
+\input{tables/may_dense_step_metrics_selected.tex}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/may_dense_step_metrics.pdf}
+\caption{Dense real-time point metrics by forecast step.}
+\label{fig:may-dense-step-metrics-full}
+\end{figure}
+
+\subsection{Horizon-Frontier Metrics}
+
+The horizon-frontier view evaluates all predictions up to a given horizon. It is useful because operational users may choose to consume only a shorter forecast window. Table~\ref{tab:may-dense-frontier-selected} reports selected frontiers, and the complete 50-frontier table is stored in \texttt{white\_paper/tables/may\_dense\_horizon\_frontier\_all.csv}.
+
+\begin{table}[htbp]
+\centering
+\caption{Selected cumulative dense metrics by horizon frontier. Complete data are available in \texttt{may\_dense\_horizon\_frontier\_all.csv}.}
+\label{tab:may-dense-frontier-selected}
+\input{tables/may_dense_horizon_frontier_cumulative.tex}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/may_dense_horizon_frontier_metrics.pdf}
+\caption{Cumulative dense real-time metrics up to each forecast horizon.}
+\label{fig:may-dense-horizon-frontier-full}
+\end{figure}
+
+\subsection{Zero and Severity Distribution}
+
+The dense evaluation denominator is dominated by road-time pairs with no observed Waze jam. Figure~\ref{fig:may-dense-zero-severity-full} reports the actual and predicted level distribution by forecast step. The complete table is stored in \texttt{white\_paper/tables/may\_dense\_step\_distribution\_all.csv}.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/may_dense_zero_and_severity_distribution.pdf}
+\caption{Actual and predicted zero/severity shares by forecast step. Missing Waze jam observations are counted as actual level 0.}
+\label{fig:may-dense-zero-severity-full}
+\end{figure}
+
+\subsection{Level-by-Step Diagnostics}
+
+The level-by-step diagnostics separate the aggregate result by true congestion level. The complete step-level table has 250 rows and is stored in \texttt{white\_paper/tables/may\_dense\_step\_level\_all.csv}; a selected CSV subset is stored in \texttt{may\_dense\_step\_level\_selected.csv}. Figures~\ref{fig:may-dense-level-mae-full} and~\ref{fig:may-dense-level-pm1-full} visualize MAE and $\pm1$ accuracy by level and step.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/may_dense_level_step_mae_heatmap.pdf}
+\caption{Dense MAE by true congestion level and forecast step.}
+\label{fig:may-dense-level-mae-full}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/may_dense_level_step_pm1_heatmap.pdf}
+\caption{Dense $\pm1$ accuracy by true congestion level and forecast step.}
+\label{fig:may-dense-level-pm1-full}
+\end{figure}
+
+\subsection{Trajectory Tracking}
+
+Pearson correlation is computed over variable road-level trajectories only, because correlation is undefined for constant all-zero actual trajectories. Table~\ref{tab:may-dense-pearson-selected} reports selected horizons, and the complete horizon table is stored in \texttt{white\_paper/tables/may\_dense\_pearson\_by\_horizon\_all.csv}. At the full 50-step horizon, 760,652 informative trajectories are evaluated; the mean Pearson correlation is 0.1749, the median is 0.1711, and 83.91\% of informative trajectories have positive correlation.
+
+\begin{table}[htbp]
+\centering
+\caption{Selected trajectory Pearson metrics by horizon. Complete data are available in \texttt{may\_dense\_pearson\_by\_horizon\_all.csv}.}
+\label{tab:may-dense-pearson-selected}
+\input{tables/may_dense_pearson_by_horizon_selected.tex}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/may_dense_pearson_by_horizon.pdf}
+\caption{Trajectory Pearson correlation by horizon for variable actual trajectories.}
+\label{fig:may-dense-pearson-full}
+\end{figure}
+
