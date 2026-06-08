@@ -434,13 +434,13 @@ All aggregate metrics below are computed on the rounded jam-level target. Exact 
 
 \subsection{Historical Validation Results}
 
-All three active ST-GNN model families achieved strong ordinal performance on the historical validation split. GConvLSTM produced the strongest aggregate validation metrics, while GConvGRU remained especially relevant for high-congestion levels. Table~\ref{tab:global-validation-summary} reports the global metrics for all three model families, and Table~\ref{tab:global-validation-levels} reports $\pm1$ accuracy by true congestion level.
+All three active ST-GNN model families achieved strong ordinal performance on the historical validation split. For example, GConvLSTM produced the strongest aggregate validation metrics, while GConvGRU remained especially relevant for high-congestion levels. Table~\ref{tab:global-validation-summary} reports the global metrics for all three model families, and Table~\ref{tab:global-validation-levels} reports $\pm1$ accuracy by true congestion level.
 
 \begin{table}[htbp]
 \centering
 \caption{Historical validation performance by model family.}
 \label{tab:global-validation-summary}
-\resizebox{\textwidth}{!}{%
+{%
 \begin{tabular}{lrrrrr}
 \hline
 Model & Exact & $\pm1$ & MAE level & Mean distance & Distance $\ge2$ \\
@@ -457,7 +457,7 @@ TGCN & 60.67\% & 81.93\% & 0.7067 & 0.6259 & 18.07\% \\
 \centering
 \caption{Historical validation $\pm1$ accuracy by true congestion level.}
 \label{tab:global-validation-levels}
-\resizebox{\textwidth}{!}{%
+{%
 \begin{tabular}{lrrrrr}
 \hline
 Model & Level 0 & Level 1 & Level 2 & Level 3 & Level 4 \\
@@ -498,7 +498,7 @@ The regional operational-loss experiment launched six additional jobs to evaluat
 \centering
 \caption{Operational-loss regional validation variants.}
 \label{tab:oploss-validation-summary}
-\resizebox{\textwidth}{!}{%
+{%
 \begin{tabular}{llrrrr}
 \hline
 Region & Model & Exact & $\pm1$ & MAE level & Val loss \\
@@ -522,7 +522,7 @@ The dense real-time evaluation compares the full prediction surface against Waze
 \centering
 \caption{Dense real-time evaluation over the fresh May window. Bias is prediction minus observed level.}
 \label{tab:may-dense-overall-full}
-\resizebox{\textwidth}{!}{%
+{%
 \begin{tabular}{rrrrrrrr}
 \hline
 Prediction files & Jam files & Dense rows & MAE & RMSE & Bias & Exact & $\pm1$ \\
@@ -541,7 +541,7 @@ Because the model predicts 50 future timesteps, the dense real-time score can al
 \centering
 \caption{Selected dense real-time metrics by forecast step. Complete 50-step data are available in \texttt{may\_dense\_step\_metrics\_all.csv}.}
 \label{tab:may-dense-step-selected}
-\resizebox{\textwidth}{!}{%
+{%
 \input{tables/may_dense_step_metrics_selected.tex}%
 }
 \end{table}
@@ -554,7 +554,7 @@ The horizon-frontier view evaluates all predictions up to a given horizon. This 
 \centering
 \caption{Selected cumulative dense metrics by horizon frontier. Complete data are available in \texttt{may\_dense\_horizon\_frontier\_all.csv}.}
 \label{tab:may-dense-frontier-selected}
-\resizebox{\textwidth}{!}{%
+{%
 \input{tables/may_dense_horizon_frontier_cumulative.tex}%
 }
 \end{table}
@@ -575,7 +575,7 @@ Pearson correlation is used as a temporal-shape metric for informative trajector
 \centering
 \caption{Selected trajectory Pearson metrics by horizon. Complete data are available in \texttt{may\_dense\_pearson\_by\_horizon\_all.csv}.}
 \label{tab:may-dense-pearson-selected}
-\resizebox{\textwidth}{!}{%
+{%
 \input{tables/may_dense_pearson_by_horizon_selected.tex}%
 }
 \end{table}
