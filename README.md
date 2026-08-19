@@ -1,56 +1,97 @@
-# Bogota Traffic Congestion Forecasting
+*Esta herramienta digital forma parte del catalogo de herramientas del **Banco Interamericano de Desarrollo**. Puedes conocer mas sobre la iniciativa del BID en [Codigo para el Desarrollo](https://knowledge.iadb.org/es/codigo-para-el-desarrollo).*
 
-This repository contains the research and operational code for graph-temporal traffic congestion forecasting in Bogota. It builds sparse spatio-temporal datasets, trains GNN-temporal models on SageMaker, reconstructs forecasts for inference, and supports offline and real-time evaluation.
+<h1 align="center">Bogota Traffic Congestion Forecasting</h1>
 
-The current project center is not only dataset preparation. The active system includes:
+<p align="center">
+Sistema de prediccion de congestion vehicular para Bogota basado en redes neuronales graficas espacio-temporales.
+</p>
 
-- sparse graph-temporal preprocessing over road, Waze, PMT, event, incident, weather, bus stop, building, and road-state sources
-- `TrafficDataset`, a seed-local graph batching dataset used by training and evaluation
-- GNN-temporal models including `GConvLSTM`, `GConvGRU`, and `TGCN`
-- SageMaker training entrypoints and launch notebooks
-- artifact-driven seed-time sampling for balanced congestion training
-- calibration and real-time dense evaluation utilities
-- a LaTeX white paper under `white_paper/`
+## Tabla de contenidos
 
-## Repository Layout
+- [Badges o escudos](#badges-o-escudos)
+- [Descripcion y contexto](#descripcion-y-contexto)
+- [Guia de usuario](#guia-de-usuario)
+- [Guia de instalacion](#guia-de-instalacion)
+- [Dependencias](#dependencias)
+- [Estructura del repositorio](#estructura-del-repositorio)
+- [Como contribuir](#como-contribuir)
+- [Codigo de conducta](#codigo-de-conducta)
+- [Autores](#autores)
+- [Informacion adicional](#informacion-adicional)
+- [Licencia](#licencia)
+- [Limitacion de responsabilidades](#limitacion-de-responsabilidades)
+- [Acknowledgments / Reconocimientos](#acknowledgments--reconocimientos)
 
-```text
-.
-├── src/                 # Runtime package: preprocessing, dataset, models, training, inference
-├── tests/               # Unit tests for dataset, temporal split, reconstruction, preprocessing
-├── notebooks/           # SageMaker launchers and exploratory notebooks
-├── scripts/             # Operational and evaluation scripts
-├── docs/                # Human-facing project documentation
-├── ai-context/          # AI handoff notes and current experiment state
-├── white_paper/         # LaTeX source for the project paper
-├── pyproject.toml       # Python dependencies and tool configuration
-├── uv.lock              # Locked Python 3.12 dependency resolution
-├── Makefile             # Common local commands
-└── Dockerfile.sagemaker # SageMaker image recipe
-```
+## Badges o escudos
 
-Read these first:
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![Status](https://img.shields.io/badge/status-active-green)
+![Tests](https://img.shields.io/badge/tests-118%20passing-brightgreen)
 
-- [docs/README.md](docs/README.md) for the documentation index
-- [docs/system-overview.md](docs/system-overview.md) for the system boundaries and main flow
-- [docs/repository-structure.md](docs/repository-structure.md) for the code map
-- [docs/setup.md](docs/setup.md) for local environment setup
-- [docs/process-runbooks.md](docs/process-runbooks.md) for operational procedures
-- [docs/artifacts-and-contracts.md](docs/artifacts-and-contracts.md) for data/model/seed contracts
-- [docs/code-reference.md](docs/code-reference.md) for a generated function and class inventory
-- [ai-context/00-start-here.md](ai-context/00-start-here.md) for the latest AI handoff state
+El badge de SonarCloud solicitado por la plantilla del BID puede agregarse cuando el proyecto tenga configurado el analisis estatico publico correspondiente.
 
-## Environment
+## Descripcion y contexto
 
-The repository is standardized on Python `3.12`.
+Este repositorio contiene el codigo de investigacion, entrenamiento, construccion de artefactos y evaluacion del sistema de prediccion de congestion vehicular de Bogota. La herramienta construye datasets espacio-temporales dispersos, entrena modelos de Graph Neural Networks temporales, reconstruye pronosticos para inferencia y permite evaluar resultados de manera offline y sobre ventanas recientes.
 
-An already-created local conda environment for this workspace is:
+El sistema modela la red vial como un grafo: los segmentos de via son nodos y las relaciones de flujo o proximidad vial son aristas. A partir de informacion historica y contextual, el modelo aprende como evoluciona la congestion en el tiempo y como se propaga entre vias conectadas.
+
+La herramienta integra fuentes como:
+
+- datos de jams e irregularidades de trafico;
+- incidentes viales;
+- eventos publicos;
+- planes de manejo de transito;
+- clima;
+- estado de la malla vial;
+- paraderos de bus;
+- edificaciones y atributos urbanos;
+- atributos estaticos de la red vial.
+
+El repositorio se enfoca en el lado de entrenamiento, preparacion de datos, calibracion y evaluacion. La implementacion de servicio en tiempo real se mantiene en un repositorio separado.
+
+## Guia de usuario
+
+Los usuarios principales de este repositorio son equipos tecnicos, cientificos de datos y responsables de operacion que necesiten preparar datos, entrenar modelos, evaluar desempeno o generar artefactos para despliegue.
+
+Flujo general de uso:
+
+1. Preparar o sincronizar las fuentes de datos requeridas.
+2. Ejecutar el pipeline de preprocesamiento para generar artefactos grafo-temporales.
+3. Entrenar el modelo con el entrypoint compatible con SageMaker.
+4. Evaluar el desempeno con las utilidades offline o de evaluacion densa reciente.
+5. Publicar los artefactos necesarios para el servicio de inferencia.
+
+Comandos principales:
 
 ```bash
-conda activate congestion-bogota-py312
+# Preparar el dataset procesado
+uv run python -m src.prepare_dataset
+
+# Ejecutar el entrypoint de entrenamiento
+python -m src.training_entrypoint
+
+# Ejecutar pruebas locales
+make test
+
+# Ejecutar lint
+make lint
 ```
 
-To create a fresh environment elsewhere:
+Para procedimientos operativos detallados, consulta:
+
+- [docs/README.md](docs/README.md): indice de documentacion.
+- [docs/system-overview.md](docs/system-overview.md): limites del sistema y flujo principal.
+- [docs/process-runbooks.md](docs/process-runbooks.md): pasos operativos comunes.
+- [docs/data-pipeline.md](docs/data-pipeline.md): pipeline de datos.
+- [docs/training.md](docs/training.md): entrenamiento.
+- [docs/inference-evaluation.md](docs/inference-evaluation.md): inferencia y evaluacion.
+
+## Guia de instalacion
+
+El proyecto esta estandarizado en Python `3.12`.
+
+Crear un ambiente local nuevo:
 
 ```bash
 conda create -n congestion-bogota-py312 python=3.12 -y
@@ -59,36 +100,21 @@ python -m pip install uv
 uv sync --all-groups
 ```
 
-PyTorch Geometric extension packages such as `torch-scatter` and `torch-sparse` may need prebuilt wheels that match the local PyTorch build. If `uv sync` tries to compile them from source, use the official PyG wheel index for your PyTorch version.
-
-For the current CPU validation environment:
+Si los paquetes de extension de PyTorch Geometric intentan compilarse localmente, instala ruedas precompiladas compatibles con la version local de PyTorch. Para el ambiente CPU validado actualmente:
 
 ```bash
 python -m pip install torch-scatter torch-sparse \
   -f https://data.pyg.org/whl/torch-2.9.0+cpu.html
 ```
 
-## Common Commands
-
-Run tests:
+Validar la instalacion:
 
 ```bash
 make test
-```
-
-Run lint:
-
-```bash
 make lint
 ```
 
-Format Python files:
-
-```bash
-make format
-```
-
-Download source data, if you have AWS access:
+Si se cuenta con acceso AWS, los datos fuente pueden sincronizarse desde S3:
 
 ```bash
 uv run -- dotenv run -- aws s3 sync \
@@ -96,64 +122,104 @@ uv run -- dotenv run -- aws s3 sync \
   ./data
 ```
 
-## Data Pipeline
+Los datos grandes y artefactos generados no se versionan en Git. Deben ubicarse en `data/`, `datos/`, `datos_procesados/`, EFS o S3, segun el flujo de trabajo.
 
-The canonical preprocessing entrypoint is:
+## Dependencias
 
-```bash
-uv run python -m src.prepare_dataset
+Dependencias principales:
+
+- Python `3.12`.
+- PyTorch.
+- PyTorch Geometric y PyTorch Geometric Temporal.
+- Pandas, NumPy, SciPy, HDF5 y PyArrow.
+- GeoPandas, Shapely, OSMnx y NetworkX.
+- AWS SDK, AWS CLI y SageMaker para entrenamiento administrado.
+- Ray y Dask para flujos distribuidos o de procesamiento intensivo.
+
+Las dependencias completas estan declaradas en [pyproject.toml](pyproject.toml) y bloqueadas en [uv.lock](uv.lock).
+
+## Estructura del repositorio
+
+```text
+.
+├── src/                 # Paquete principal: preprocessing, dataset, modelos, training e inferencia
+├── tests/               # Pruebas unitarias y de comportamiento
+├── notebooks/           # Lanzadores SageMaker y notebooks exploratorios
+├── scripts/             # Scripts operativos, evaluacion y artefactos
+├── docs/                # Documentacion tecnica y operativa
+├── ai-context/          # Notas de handoff y estado de experimentos
+├── white_paper/         # Fuente LaTeX del white paper del proyecto
+├── pyproject.toml       # Dependencias y configuracion de herramientas
+├── uv.lock              # Resolucion bloqueada de dependencias
+├── Makefile             # Comandos locales comunes
+└── Dockerfile.sagemaker # Receta de imagen para SageMaker
 ```
 
-The pipeline creates processed static and dynamic features, merges them into sparse HDF5 datasets, computes normalization constants, and creates a `TrafficDataset`-compatible artifact set. See [docs/data-pipeline.md](docs/data-pipeline.md).
+## Como contribuir
 
-Large data and generated artifacts are intentionally ignored by Git. They should live under `data/`, `datos/`, `datos_procesados/`, EFS, or S3 depending on the workflow.
+Para contribuir:
 
-## Training
-
-The canonical SageMaker entrypoint is:
+1. Revisa la documentacion en [docs/README.md](docs/README.md) y el estado actual en [ai-context/00-start-here.md](ai-context/00-start-here.md).
+2. Crea una rama descriptiva para el cambio.
+3. Mantiene los cambios acotados al modulo correspondiente.
+4. Ejecuta validaciones locales antes de abrir un pull request:
 
 ```bash
-python -m src.training_entrypoint
+make test
+make lint
 ```
 
-In practice, training is launched through the SageMaker notebooks in `notebooks/`, especially `notebooks/sagemaker_training_job.ipynb`.
+Las contribuciones deben preservar los contratos principales del sistema:
 
-The active training path supports:
+- un batch de entrenamiento usa un solo grafo local asociado a un seed;
+- `edge_index` debe corresponder al conjunto local de nodos;
+- el orden de features debe coincidir con el esperado por el modelo;
+- los artefactos de entrenamiento, calibracion e inferencia deben documentar su ventana temporal y configuracion.
 
-- old seed-based sampling
-- artifact-driven `(seed_id, time_idx)` sampling
-- model selection among `GConvLSTM`, `GConvGRU`, and `TGCN`
-- shape-following auxiliary loss controls
+## Codigo de conducta
 
-See [docs/training.md](docs/training.md) and [docs/rebalance_sampler_design.md](docs/rebalance_sampler_design.md).
+Este repositorio no incluye todavia un archivo `CODE_OF_CONDUCT.md`. Se recomienda agregar uno siguiendo las plantillas publicas de GitHub o los lineamientos institucionales aplicables antes de abrir el proyecto a contribuciones externas amplias.
 
-## Inference And Evaluation
+Mientras tanto, se espera que toda interaccion tecnica sea respetuosa, colaborativa y orientada a resolver problemas de manera transparente.
 
-Inference utilities are in:
+## Autores
 
-- `src/inference_dataloader.py`
-- `src/inference_production.py`
-- `src/prediction_reconstruction.py`
+Proyecto desarrollado en el marco de trabajo asociado al sistema de prediccion de congestion para Bogota y su documentacion tecnica. Antes de publicar nombres personales o correos, validar la informacion institucional correspondiente.
 
-Evaluation scripts are in `scripts/`, including recent real-time dense evaluation utilities.
+## Informacion adicional
 
-See [docs/inference-evaluation.md](docs/inference-evaluation.md).
+Documentacion recomendada para nuevos mantenedores:
 
-## Current Quality State
+- [docs/repository-structure.md](docs/repository-structure.md): mapa del codigo.
+- [docs/artifacts-and-contracts.md](docs/artifacts-and-contracts.md): contratos de datos, modelos y artefactos.
+- [docs/code-reference.md](docs/code-reference.md): inventario de clases y funciones.
+- [docs/validation.md](docs/validation.md): senales de calidad y validacion.
+- [docs/cleanup-plan.md](docs/cleanup-plan.md): tareas pendientes y riesgos de mantenimiento.
 
-As of the latest local validation in Python `3.12.12`:
+El white paper tecnico se encuentra en [white_paper/traffic_forecasting.tex](white_paper/traffic_forecasting.tex), con referencias en [white_paper/references.bib](white_paper/references.bib).
 
-- `118` tests pass
-- `ruff check .` passes
+## Licencia
 
-Remaining cleanup tasks are tracked in [docs/cleanup-plan.md](docs/cleanup-plan.md).
+La licencia del proyecto esta incluida en [LICENSE.md](LICENSE.md). Consulta ese archivo para conocer los permisos, condiciones y restricciones de uso, modificacion y distribucion de la herramienta.
 
-## White Paper
+## Limitacion de responsabilidades
 
-The paper source is in `white_paper/traffic_forecasting.tex`, with references in `white_paper/references.bib`.
+El BID no sera responsable, bajo circunstancia alguna, de dano ni indemnizacion, moral o patrimonial; directo o indirecto; accesorio o especial; o por via de consecuencia, previsto o imprevisto, que pudiese surgir:
 
-Build outputs such as `.aux`, `.bbl`, `.fls`, `.out`, and `.synctex.gz` are ignored. See [white_paper/README.md](white_paper/README.md).
+i. Bajo cualquier teoria de responsabilidad, ya sea por contrato, infraccion de derechos de propiedad intelectual, negligencia o bajo cualquier otra teoria; y/o
 
-## AI Context
+ii. A raiz del uso de la Herramienta Digital, incluyendo, pero sin limitacion de potenciales defectos en la Herramienta Digital, o la perdida o inexactitud de los datos de cualquier tipo. Lo anterior incluye los gastos o danos asociados a fallas de comunicacion y/o fallas de funcionamiento de computadoras, vinculados con la utilizacion de la Herramienta Digital.
 
-`ai-context/` is a handoff layer for AI-assisted development. It captures current decisions, experiment status, known gaps, and next steps. It should not replace the public-facing documentation in `docs/`, but it is the best place to check the current state before changing training, inference, or evaluation behavior.
+## Acknowledgments / Reconocimientos
+
+**Copyright © [2025]. Inter-American Development Bank ("IDB"). Authorized Use.**
+The procedures and results obtained based on the execution of this software are those programmed by the developers and do not necessarily reflect the views of the IDB, its Board of Executive Directors or the countries it represents.
+
+**Copyright © [2025]. Banco Interamericano de Desarrollo ("BID"). Uso Autorizado.**
+Los procedimientos y resultados obtenidos con la ejecucion de este software son los programados por los desarrolladores y no reflejan necesariamente las opiniones del BID, su Directorio Ejecutivo ni los paises que representa.
+
+### Support and Usage Documentation / Documentacion de Soporte y Uso
+
+**Copyright © [2025]. Inter-American Development Bank ("IDB").** The Support and Usage Documentation is licensed under the Creative Commons License CC-BY 4.0 license. The opinions expressed in the Support and Usage Documentation are those of its authors and do not necessarily reflect the opinions of the IDB, its Board of Executive Directors, or the countries it represents.
+
+**Copyright © [2025]. Banco Interamericano de Desarrollo (BID).** La Documentacion de Soporte y Uso esta licenciada bajo la licencia Creative Commons CC-BY 4.0. Las opiniones expresadas en la Documentacion de Soporte y Uso son las de sus autores y no reflejan necesariamente las opiniones del BID, su Directorio Ejecutivo ni los paises que representa.
