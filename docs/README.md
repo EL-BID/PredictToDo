@@ -9,6 +9,7 @@ Start here:
 - [setup.md](setup.md): Python 3.12 environment and local commands
 - [artifacts-and-contracts.md](artifacts-and-contracts.md): graph, dataset, model, seed, region, calibration, and evaluation contracts
 - [process-runbooks.md](process-runbooks.md): step-by-step procedures for common workflows
+- [data-sources.md](data-sources.md): inventario de fuentes, versiones y condiciones de uso
 - [data-pipeline.md](data-pipeline.md): preprocessing and sparse dataset construction
 - [training.md](training.md): SageMaker training, models, losses, and artifacts
 - [rebalance_sampler_design.md](rebalance_sampler_design.md): seed-time sampler rationale
@@ -17,4 +18,5 @@ Start here:
 - [code-reference.md](code-reference.md): generated inventory of Python classes, functions, and methods
 - [cleanup-plan.md](cleanup-plan.md): remaining cleanup before external delivery
 
-For the latest operational state, also read `ai-context/00-start-here.md`.
+- [code4dev-publication.md](code4dev-publication.md): preparación de la distribución pública y bloqueos pendientes
+- [digital-morning-quiz.md](digital-morning-quiz.md): propuesta de cuestionario para el evento del 1 de octubre

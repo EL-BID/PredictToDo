@@ -11,3 +11,6 @@
 *.pickle binary
 *.h5 binary
 *.parquet binary
+
+# Exclude local working context from archive exports as well.
+/ai-context export-ignore

@@ -18,7 +18,7 @@ The current comparison line focuses on:
 - `GConvGRU`
 - `TGCN`
 
-`A3TGCN` remains a supported or historical architecture point, but it is not the center of the latest three-model comparison line documented in `ai-context/06-current-workspace-state.md`.
+`A3TGCN` is also supported by the model implementation.
 
 ## Sampling Paths
 
@@ -33,7 +33,7 @@ The artifact-driven path plans batches over `(seed_id, time_idx)` rows while pre
 
 The current seed-time artifact direction uses a combined seed universe and a bucket mix intended to increase informative congestion exposure. See [rebalance_sampler_design.md](rebalance_sampler_design.md).
 
-Regional training uses separate central and noncentral artifacts plus `--training-region` and `--node-region-map-path`. The current handoff for that line is in `../ai-context/16-regional-corridor-retraining-2026-05-14.md` and `../ai-context/17-regional-status-2026-05-18.md`.
+Regional training uses separate central and noncentral artifacts plus `--training-region` and `--node-region-map-path`. See [artifacts-and-contracts.md](artifacts-and-contracts.md) for the regional data contract.
 
 ## SageMaker Launch Configuration
 

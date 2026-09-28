@@ -55,5 +55,5 @@ For a new maintainer:
 3. Read `docs/artifacts-and-contracts.md`.
 4. Read `docs/process-runbooks.md`.
 5. Use `docs/code-reference.md` to locate functions/classes.
-6. Check `ai-context/00-start-here.md` for current state before making changes.
+6. Review the relevant documentation and tests before making changes.
 

@@ -26,7 +26,6 @@ Current Ruff result:
 
 - Keep root `README.md` as the project entrypoint.
 - Keep `docs/` as human-facing documentation.
-- Keep `ai-context/` as the current-state AI handoff layer.
 - Keep `white_paper/` focused on LaTeX source, bibliography, and final paper assets.
 
 ## Priority 4: Runtime Traceability

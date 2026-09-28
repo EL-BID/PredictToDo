@@ -32,7 +32,7 @@
 
 ## Documentation And Paper
 
-`docs/` contains project documentation. `ai-context/` contains AI handoff state. `white_paper/` contains the LaTeX paper source.
+`docs/` contains project documentation. `white_paper/` contains the LaTeX paper source.
 
 ## Generated Files
 

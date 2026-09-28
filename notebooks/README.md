@@ -1,24 +1,14 @@
 # Notebooks
 
-This folder contains both operational launch notebooks and exploratory notebooks.
+## Ejemplo de uso
 
-Canonical operational notebooks:
+[local_training_example.ipynb](local_training_example.ipynb) muestra carga de datos
+locales, entrenamiento, validación, evaluación y guardado usando directamente los
+componentes de `src`. La muestra real está pendiente de incorporar; la configuración
+explica el contrato esperado. No requiere servicios externos.
 
-- `sagemaker_training_job.ipynb`: primary SageMaker training launcher
-- `sagemaker_calibration_job.ipynb`: calibration launcher
-- `sagemaker_seed_time_sharded_launcher.ipynb`: shard-based seed-time artifact generation
-- `sagemaker_seed_time_artifact_builder.ipynb`: smaller or earlier seed-time artifact builder
-- `inference_production_run.ipynb`: inference run helper
+## Material de desarrollo
 
-Exploratory or historical notebooks/scripts:
-
-- `training_example.ipynb`
-- `training_example_weighted.ipynb`
-- `training_epoch.ipynb`
-- `example_sparsity.ipynb`
-- `evaluation_example.ipynb`
-- `loss_tests.py`
-- `connected_components_analysis.py`
-- `Extract_buildings.py`
-
-Before external delivery, this folder should be split or labeled more strictly so launch notebooks are not mixed with experiments.
+Los demás notebooks son material experimental u operativo del desarrollo del
+proyecto. Pueden requerir datos y configuraciones propios del entorno original;
+no forman parte del recorrido del ejemplo de uso.

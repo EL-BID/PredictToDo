@@ -21,7 +21,6 @@ The current project center is not only dataset preparation. The active system in
 ├── notebooks/           # SageMaker launchers and exploratory notebooks
 ├── scripts/             # Operational and evaluation scripts
 ├── docs/                # Human-facing project documentation
-├── ai-context/          # AI handoff notes and current experiment state
 ├── white_paper/         # LaTeX source for the project paper
 ├── pyproject.toml       # Python dependencies and tool configuration
 ├── uv.lock              # Locked Python 3.12 dependency resolution
@@ -38,7 +37,6 @@ Read these first:
 - [docs/process-runbooks.md](docs/process-runbooks.md) for operational procedures
 - [docs/artifacts-and-contracts.md](docs/artifacts-and-contracts.md) for data/model/seed contracts
 - [docs/code-reference.md](docs/code-reference.md) for a generated function and class inventory
-- [ai-context/00-start-here.md](ai-context/00-start-here.md) for the latest AI handoff state
 
 ## Environment
 
@@ -153,7 +151,3 @@ Remaining cleanup tasks are tracked in [docs/cleanup-plan.md](docs/cleanup-plan.
 The paper source is in `white_paper/traffic_forecasting.tex`, with references in `white_paper/references.bib`.
 
 Build outputs such as `.aux`, `.bbl`, `.fls`, `.out`, and `.synctex.gz` are ignored. See [white_paper/README.md](white_paper/README.md).
-
-## AI Context
-
-`ai-context/` is a handoff layer for AI-assisted development. It captures current decisions, experiment status, known gaps, and next steps. It should not replace the public-facing documentation in `docs/`, but it is the best place to check the current state before changing training, inference, or evaluation behavior.

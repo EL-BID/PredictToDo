@@ -202,3 +202,13 @@ datos_procesados/
 
 # Generated paper result figures and handoff artifacts
 white_paper/figures/
+
+# Reviewed public example only; operational/raw data remain ignored.
+!examples/bogota/data/
+!examples/bogota/data/**/
+!examples/bogota/data/**/*.csv
+!examples/bogota/data/**/*.parquet
+!examples/bogota/data/**/*.geojson
+
+# Local working context; never version or publish.
+/ai-context/

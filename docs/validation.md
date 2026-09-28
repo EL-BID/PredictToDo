@@ -57,7 +57,6 @@ Before handing assets to inference:
 Every substantial change should update:
 
 - `docs/` when it changes public workflow, architecture, commands, or contracts;
-- `ai-context/` when it changes current state, decisions, artifacts, or next steps;
 - `docs/code-reference.md` when new Python files, functions, classes, or methods are added.
 
 Regenerate the code reference with the AST inventory script used in the latest documentation pass, or update the affected section manually.
