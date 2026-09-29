@@ -212,3 +212,6 @@ white_paper/figures/
 
 # Local working context; never version or publish.
 /ai-context/
+
+# Fixed, preprocessed sample for the executable Bogotá notebook.
+!/examples/bogota/data/*.h5

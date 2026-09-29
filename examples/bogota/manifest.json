@@ -1,0 +1,184 @@
+{
+  "seed": "17000085_N.1",
+  "nodes": 5000,
+  "edges": 21986,
+  "strongly_connected": true,
+  "start": "2024-10-01 00:00:00",
+  "end_exclusive": "2024-10-16 00:00:00",
+  "datasets": {
+    "coi_points_dataset.h5": {
+      "rows": 37949,
+      "h5_bytes": 94433,
+      "metadata_bytes": 128733,
+      "populated_intervals": 1440
+    },
+    "coi_tracts_dataset.h5": {
+      "rows": 286621,
+      "h5_bytes": 789618,
+      "metadata_bytes": 128732,
+      "populated_intervals": 1440
+    },
+    "events_dataset.h5": {
+      "rows": 59712,
+      "h5_bytes": 145611,
+      "metadata_bytes": 128768,
+      "populated_intervals": 480
+    },
+    "incidents_dataset.h5": {
+      "rows": 15906,
+      "h5_bytes": 55315,
+      "metadata_bytes": 130059,
+      "populated_intervals": 302
+    },
+    "irregularities_dataset.h5": {
+      "rows": 650871,
+      "h5_bytes": 6457997,
+      "metadata_bytes": 130811,
+      "populated_intervals": 641
+    },
+    "jam_delay_dataset.h5": {
+      "rows": 821721,
+      "h5_bytes": 11176107,
+      "metadata_bytes": 128760,
+      "populated_intervals": 1407
+    },
+    "jam_level_count_dataset.h5": {
+      "rows": 1095628,
+      "h5_bytes": 5281566,
+      "metadata_bytes": 128776,
+      "populated_intervals": 1407
+    },
+    "jam_velocity_dataset.h5": {
+      "rows": 821721,
+      "h5_bytes": 7774535,
+      "metadata_bytes": 128755,
+      "populated_intervals": 1407
+    },
+    "jams_dataset.h5": {
+      "rows": 547814,
+      "h5_bytes": 5043734,
+      "metadata_bytes": 128759,
+      "populated_intervals": 1407
+    },
+    "static_dataset.h5": {
+      "rows": 112844,
+      "h5_bytes": 594710,
+      "metadata_bytes": 92598
+    }
+  },
+  "package_bytes": 45746325,
+  "geography": {
+    "seed": "17000085_N.1",
+    "reference_lat_lon": [
+      4.6,
+      -74.075
+    ],
+    "seed_lat_lon": [
+      4.599943970027598,
+      -74.07528173497137
+    ],
+    "bounds_lat_lon": [
+      [
+        4.574478782000028,
+        -74.09377086
+      ],
+      [
+        4.628045429999987,
+        -74.032291407
+      ]
+    ],
+    "coordinate_crs": "EPSG:3116 (según código de construcción)",
+    "strongly_connected_model_graph": true,
+    "edge_legal_counts": {
+      "0": 10908,
+      "1": 11078
+    },
+    "geometry_note": "Segmentos rectos entre extremos; no geometría vial completa."
+  },
+  "files": {
+    "coi_points_dataset.h5": {
+      "bytes": 94433,
+      "sha256": "82619d659a78e905daf9a1e0cb3c4c262bf33b54126652678a00c7ca51b6dfe4"
+    },
+    "coi_points_dataset_metadata.pkl": {
+      "bytes": 128733,
+      "sha256": "406d69d6ddd9d91497e26307fa893d3238acebaec7cd811240638c28675178f3"
+    },
+    "coi_tracts_dataset.h5": {
+      "bytes": 789618,
+      "sha256": "1627c1fdc81c9b2b5e7a7cd1cc4aeded494e221f0c4c3f2e5a80bb6dad15b54d"
+    },
+    "coi_tracts_dataset_metadata.pkl": {
+      "bytes": 128732,
+      "sha256": "ff41bb9fad42be99c129d93f61e3f23cd570dce064aff1538e52ad7e5a3d455c"
+    },
+    "events_dataset.h5": {
+      "bytes": 145611,
+      "sha256": "81f6ff4b700aa97122c0a9c655624dd76d604a4ed3f27956e51f7703c865da79"
+    },
+    "events_dataset_metadata.pkl": {
+      "bytes": 128768,
+      "sha256": "c23d2c3c39e34f6e502c71f93db66750a4f74ed760f78cd778d44c267d4ee9c0"
+    },
+    "graph.pkl": {
+      "bytes": 7077948,
+      "sha256": "01c209dea391ee47669717481639e7e627c750bcf1698a63e4deaf2c87402646"
+    },
+    "incidents_dataset.h5": {
+      "bytes": 55315,
+      "sha256": "940ad4460e2bba939fa36ac32d8bd970b4fc9edfa31fffb3fb7b744edea88092"
+    },
+    "incidents_dataset_metadata.pkl": {
+      "bytes": 130059,
+      "sha256": "d909f0db7d9a5d7e7cc23d8c64d9fe394b6cacc6e30db689b6ede91819eadfd3"
+    },
+    "irregularities_dataset.h5": {
+      "bytes": 6457997,
+      "sha256": "51199b240870be1ec468b987444dc5a9e3504a0d40c73a736a7f02cf02fcad9c"
+    },
+    "irregularities_dataset_metadata.pkl": {
+      "bytes": 130811,
+      "sha256": "fbff53fa5958df7780fa15923b2cf0337f446151d5f4c8e1b55be80d347e2d3d"
+    },
+    "jam_delay_dataset.h5": {
+      "bytes": 11176107,
+      "sha256": "9b100875ceaf4fa76171fb24e5990c50c78c0266756d111c8cd0984b5a54a639"
+    },
+    "jam_delay_dataset_metadata.pkl": {
+      "bytes": 128760,
+      "sha256": "40e3c304d9135ba60538051c73afa1d89f2d85636d602aeb66e74b015ca17375"
+    },
+    "jam_level_count_dataset.h5": {
+      "bytes": 5281566,
+      "sha256": "552ec279c2b6dddd02637cd3098c4bab17aca4a7051a41ae0810011fd61580af"
+    },
+    "jam_level_count_dataset_metadata.pkl": {
+      "bytes": 128776,
+      "sha256": "5614266223e4bfe934e072377faf480b39b4b63d8500b68ee993db97348baaac"
+    },
+    "jam_velocity_dataset.h5": {
+      "bytes": 7774535,
+      "sha256": "30e1cd423e19a8303efa03c07354ffa2be06a24901f62060bf5fe4e0a300faa9"
+    },
+    "jam_velocity_dataset_metadata.pkl": {
+      "bytes": 128755,
+      "sha256": "2b07b29f40594fccf7db5b34b6252ca4b58cf0c568de7738362b295ac58b3cc6"
+    },
+    "jams_dataset.h5": {
+      "bytes": 5043734,
+      "sha256": "f167c295720255af321ee273066336669366c194768ba2721b85b577c59dc9fe"
+    },
+    "jams_dataset_metadata.pkl": {
+      "bytes": 128759,
+      "sha256": "7304a2236bab1821c0eb913bb40a0537ff82afca02ac20980f7f7815560e050d"
+    },
+    "static_dataset.h5": {
+      "bytes": 594710,
+      "sha256": "2c4d836f26c983ade17cf04843d31e9cb5cb1411e14c1c4394d9dce0136c8b21"
+    },
+    "static_dataset_metadata.pkl": {
+      "bytes": 92598,
+      "sha256": "1544f5e246108eb1e3160400df3bb0e5841a58b87358084939b7a41401358538"
+    }
+  }
+}

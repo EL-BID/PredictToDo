@@ -34,10 +34,12 @@ modelos de `src`. Permite configurar los archivos de entrada, inspeccionar una
 muestra, entrenar una red GConvGRU, comparar sus predicciones con una referencia
 sencilla y guardar los pesos junto con su configuración.
 
-La estructura del ejemplo está preparada para una muestra de datos preprocesados
-que se incorporará posteriormente. Sus nombres de archivo son ilustrativos y se
-ajustan en una única celda de configuración. El notebook explica el formato
-esperado y señala los archivos faltantes antes de iniciar el entrenamiento.
+El repositorio incluye una [muestra preprocesada del centro de Bogotá](examples/bogota/README.md):
+5.000 vías conectadas y 15 días (1–15 de octubre de 2024), en 45,75 MB.
+El notebook tiene las rutas configuradas y verifica la integridad de los archivos.
+Por defecto entrena desde cero sobre 32 vías, con dos épocas y hasta 16 ventanas
+por partición. La pérdida y las métricas usan solo objetivos explícitos; las
+entradas ausentes se rellenan a cero como simplificación del ejemplo.
 
 ## Datos de entrada
 
