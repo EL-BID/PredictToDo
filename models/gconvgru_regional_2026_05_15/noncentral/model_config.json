@@ -1,0 +1,9 @@
+{
+  "static_dim": 117,
+  "dynamic_dim": 130,
+  "future_dim": 11,
+  "input_seq_len": 150,
+  "forecast_horizon": 50,
+  "model_type": "GConvGRU",
+  "include_velocity_target": true
+}

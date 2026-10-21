@@ -41,6 +41,16 @@ Por defecto entrena desde cero sobre 32 vías, con dos épocas y hasta 16 ventan
 por partición. La pérdida y las métricas usan solo objetivos explícitos; las
 entradas ausentes se rellenan a cero como simplificación del ejemplo.
 
+## Pesos preentrenados
+
+Los [modelos GConvGRU regionales del 15 de mayo de 2026](models/gconvgru_regional_2026_05_15/README.md)
+incluyen pesos para las regiones central y no central, configuración y un registro
+ordenado de sus columnas de entrada. **Estos pesos requieren las entradas y
+transformaciones de esa versión; no son intercambiables con los del notebook de
+ejemplo.** Consulta el README de la carpeta para las condiciones de compatibilidad,
+la procedencia del orden estático y los elementos de normalización aún necesarios
+para ejecutar inferencia real.
+
 ## Datos de entrada
 
 Para el caso de Bogotá se combinaron datos de tráfico, infraestructura vial,

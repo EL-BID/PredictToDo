@@ -1,0 +1,18 @@
+{
+  "artifact_date": "2026-05-15",
+  "selection_manifest_date": "2026-05-18",
+  "region": "central",
+  "status": "final_candidate_for_deployment_and_testing",
+  "training_note": "Trained from partial regional seed-time artifacts.",
+  "validation_metrics": {
+    "val_loss": 5.6175971031188965,
+    "val_mae_level": 0.8034510016441345,
+    "val_accuracy_exact": 0.5895410180091858,
+    "val_accuracy_pm1": 0.7594580054283142,
+    "val_class_distance_ge2_rate": 0.2405419945716858
+  },
+  "original_bundle_sha256": "1c2fd23618923d58f5b28b2883a2d660c9da213343592306633b0c63b7393367",
+  "model_sha256": "b39b914fa5ebead8fd493165d733cecb47fc534e958d65c8a454cdf072745b30",
+  "original_checkpoint_sha256": "626131462ab0491e8fd96e7094fdc9e12a6d82b6107af3c789eca39abb654b81",
+  "export": "state_dict only; tensor equality verified against original checkpoint; excludes internal training paths"
+}
