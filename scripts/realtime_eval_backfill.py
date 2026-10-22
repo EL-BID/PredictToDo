@@ -22,10 +22,6 @@ import numpy as np
 import pandas as pd
 
 
-S3_BUCKET = "ine-projects-incoming-data"
-S3_PREFIX = "congestion-prediction/co/movilidad-bogota/real-time"
-INFERENCE_PREFIX = f"s3://{S3_BUCKET}/{S3_PREFIX}/inference/"
-JAMS_PREFIX = f"s3://{S3_BUCKET}/{S3_PREFIX}/jams/"
 PRED_RE = re.compile(r"predictions_(\d{8})_(\d{4})\.parquet$")
 JAMS_RE = re.compile(r"JamsService_(\d{8})_(\d{4})\.parquet$")
 
@@ -148,11 +144,11 @@ def select_jams_files(
     return selected
 
 
-def download(profile: str, key: str, output_dir: Path) -> Path:
+def download(profile: str, key: str, output_dir: Path, bucket: str) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / Path(key).name
     if not path.exists():
-        run_aws(["s3", "cp", f"s3://{S3_BUCKET}/{key}", str(path), "--profile", profile])
+        run_aws(["s3", "cp", f"s3://{bucket}/{key}", str(path), "--profile", profile])
     return path
 
 
@@ -252,13 +248,16 @@ def main() -> None:
         type=Path,
         default=Path("artifacts/realtime_eval_backfill"),
     )
+    parser.add_argument("--bucket", required=True, help="S3 bucket containing predictions and observations")
+    parser.add_argument("--s3-prefix", required=True, help="Key prefix containing inference/ and jams/ subdirectories")
     args = parser.parse_args()
+    s3_base = f"s3://{args.bucket}/{args.s3_prefix.strip('/')}"
 
     inference_objects = sorted(
-        list_objects(INFERENCE_PREFIX, args.profile), key=lambda obj: obj.listed_at
+        list_objects(f"{s3_base}/inference/", args.profile), key=lambda obj: obj.listed_at
     )
     jams_objects = sorted(
-        list_objects(JAMS_PREFIX, args.profile), key=lambda obj: obj.listed_at
+        list_objects(f"{s3_base}/jams/", args.profile), key=lambda obj: obj.listed_at
     )
 
     latest_observed_utc = latest_observed_utc_from_jams_name(jams_objects[-1].name)
@@ -280,8 +279,8 @@ def main() -> None:
     )
 
     download_dir = args.output_dir / "downloads"
-    pred_paths = [download(args.profile, obj.key, download_dir) for obj in prediction_selection]
-    jams_paths = [download(args.profile, obj.key, download_dir) for obj in jams_selection]
+    pred_paths = [download(args.profile, obj.key, download_dir, args.bucket) for obj in prediction_selection]
+    jams_paths = [download(args.profile, obj.key, download_dir, args.bucket) for obj in jams_selection]
 
     jams_df = load_jams(jams_paths)
     road_filter = set(jams_df["road_id"].unique())

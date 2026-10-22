@@ -14,7 +14,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Download new regional seed-time shards, merge with reused rows, and rebucket per region."
     )
-    parser.add_argument("--bucket", default="sagemaker-congestion-bogota")
+    parser.add_argument("--bucket", required=True)
     parser.add_argument(
         "--s3-prefix",
         default="congestion-bogota/region-seed-time-artifacts",

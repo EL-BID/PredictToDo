@@ -4,12 +4,10 @@ This document records the files and contracts that connect preprocessing, traini
 
 ## Data Locations
 
-Large data is not stored in Git. Depending on the workflow, it lives in:
-
-- local `data/`, `datos/`, or `datos_procesados/`;
-- SageMaker/EFS path `/data/datos_procesados`;
-- S3 buckets under `s3://sagemaker-congestion-bogota/...`;
-- shared operational artifacts under `s3://ine-projects-incoming-data/congestion-prediction/co/movilidadbogota/artifacts/...`.
+The runnable sample is included under `examples/bogota/`. Larger inputs are
+provided separately, through local directories or storage configured by the user.
+SageMaker notebooks obtain deployment-specific locations from environment
+variables; see [setup.md](setup.md#optional-aws-configuration).
 
 ## Graph Contract
 
@@ -93,12 +91,8 @@ The regional split is defined by `node_region_map.csv` with at least:
 
 Training uses this map to mask loss and operational metrics. Inference uses the same map to filter published outputs by model region.
 
-Shared S3 paths:
-
-```text
-s3://ine-projects-incoming-data/congestion-prediction/co/movilidadbogota/artifacts/corridor_regions/node_region_map.csv
-s3://ine-projects-incoming-data/congestion-prediction/co/movilidadbogota/artifacts/corridor_regions/node_region_map_metadata.json
-```
+Provide `node_region_map.csv` and `node_region_map_metadata.json` from the same
+regional preprocessing version, using local paths or your configured S3 location.
 
 ## Calibration And Evaluation Contract
 

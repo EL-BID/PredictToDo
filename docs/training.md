@@ -37,15 +37,14 @@ Regional training uses separate central and noncentral artifacts plus `--trainin
 
 ## SageMaker Launch Configuration
 
-The current notebook launch path should preserve the successful global training configuration from the latest completed shape-loss line:
+SageMaker launch notebooks require deployment settings from the kernel environment;
+see [setup.md](setup.md#optional-aws-configuration). Bucket, execution role, image,
+EFS ID and VPC configuration must belong to your own deployment. Artifact URIs must
+refer to inputs compatible with the model and preprocessing version.
 
-- region `us-east-1`
-- role `arn:aws:iam::195419001736:role/SagemakerExecutionRole`
-- image `195419001736.dkr.ecr.us-east-1.amazonaws.com/congestion-bogota-sagemaker:temporal-features-20260331-194332`
-- EFS `fs-099e29197c0a3e353` mounted from `/data/datos_procesados`
-- seed-time artifact `s3://sagemaker-congestion-bogota/congestion-bogota/seed-time-artifacts/final_all/seed_time_bucket_rows_merged_all.parquet`
-- global model instances: `GConvGRU` on `ml.g5.4xlarge`, `GConvLSTM` on `ml.g4dn.8xlarge`, and `TGCN` on `ml.g5.8xlarge`
-- previous global jobs used `epochs = 2`, `batch-size = 16`, `node-batch-size = 500`, `input-seq-len = 150`, `output-seq-len = 50`, and `seed-time-bucket-target-ratios = 0.45,0.30,0.25`
+The regional launch scripts require `--bucket`, `--role-arn`, `--image`,
+`--efs-id`, `--subnets` and `--security-group-ids`. Use `--help` for all options.
+Instance types, sample sizes and training parameters remain configurable.
 
 ## Loss Stack
 

@@ -17,4 +17,4 @@ conda activate congestion-bogota-py312
 python -m pytest --disable-warnings tests
 ```
 
-Known current failures are documented in `docs/cleanup-plan.md`.
+See [validation guidance](../docs/validation.md) for the checks and their scope.

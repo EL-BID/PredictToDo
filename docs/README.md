@@ -16,7 +16,3 @@ Start here:
 - [inference-evaluation.md](inference-evaluation.md): inference and real-time evaluation
 - [validation.md](validation.md): checks before training, artifact handoff, or deployment
 - [code-reference.md](code-reference.md): generated inventory of Python classes, functions, and methods
-- [cleanup-plan.md](cleanup-plan.md): remaining cleanup before external delivery
-
-- [code4dev-publication.md](code4dev-publication.md): preparación de la distribución pública y bloqueos pendientes
-- [digital-morning-quiz.md](digital-morning-quiz.md): propuesta de cuestionario para el evento del 1 de octubre

@@ -12,23 +12,18 @@ from pathlib import Path
 import boto3
 
 
-DEFAULT_IMAGE = (
-    "195419001736.dkr.ecr.us-east-1.amazonaws.com/"
-    "congestion-bogota-sagemaker:temporal-features-20260331-194332"
-)
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Launch central/noncentral regional training jobs.")
     parser.add_argument("--region", default="us-east-1")
-    parser.add_argument("--bucket", default="sagemaker-congestion-bogota")
+    parser.add_argument("--bucket", required=True)
     parser.add_argument("--s3-prefix", default="congestion-bogota/regional-training")
-    parser.add_argument("--role-arn", default="arn:aws:iam::195419001736:role/SagemakerExecutionRole")
-    parser.add_argument("--image", default=DEFAULT_IMAGE)
-    parser.add_argument("--efs-id", default="fs-099e29197c0a3e353")
+    parser.add_argument("--role-arn", required=True)
+    parser.add_argument("--image", required=True)
+    parser.add_argument("--efs-id", required=True)
     parser.add_argument("--efs-path", default="/data/datos_procesados")
-    parser.add_argument("--subnets", default="subnet-017c79447d5151efe")
-    parser.add_argument("--security-group-ids", default="sg-0962698c0c8352ddd,sg-03590ecb70a82d570")
+    parser.add_argument("--subnets", required=True)
+    parser.add_argument("--security-group-ids", required=True)
     parser.add_argument("--instance-count", type=int, default=1)
     parser.add_argument("--volume-size-gb", type=int, default=100)
     parser.add_argument("--max-runtime-seconds", type=int, default=36 * 60 * 60)

@@ -21,11 +21,6 @@ from pathlib import Path
 import pandas as pd
 
 
-S3_BASE = (
-    "s3://ine-projects-incoming-data/congestion-prediction/"
-    "co/movilidad-bogota/real-time"
-)
-
 
 @dataclass
 class S3Object:
@@ -71,10 +66,10 @@ def list_objects(prefix: str, profile: str) -> list[S3Object]:
     return parse_s3_ls(output)
 
 
-def download_object(profile: str, key: str, output_dir: Path) -> Path:
+def download_object(profile: str, key: str, output_dir: Path, bucket: str) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     local_path = output_dir / Path(key).name
-    run_aws(["s3", "cp", f"s3://ine-projects-incoming-data/{key}", str(local_path), "--profile", profile])
+    run_aws(["s3", "cp", f"s3://{bucket}/{key}", str(local_path), "--profile", profile])
     return local_path
 
 
@@ -173,10 +168,13 @@ def main() -> None:
         default=Path("artifacts/realtime_eval_sample"),
         help="Directory for downloaded files and outputs",
     )
+    parser.add_argument("--bucket", required=True, help="S3 bucket containing predictions and observations")
+    parser.add_argument("--s3-prefix", required=True, help="Key prefix containing inference/ and jams/ subdirectories")
     args = parser.parse_args()
+    s3_base = f"s3://{args.bucket}/{args.s3_prefix.strip('/')}"
 
-    inference_prefix = f"{S3_BASE}/inference/"
-    jams_prefix = f"{S3_BASE}/jams/"
+    inference_prefix = f"{s3_base}/inference/"
+    jams_prefix = f"{s3_base}/jams/"
 
     inference_objects = sorted(
         list_objects(inference_prefix, args.profile), key=lambda obj: obj.timestamp
@@ -190,9 +188,9 @@ def main() -> None:
 
     download_dir = args.output_dir / "downloads"
     inference_paths = [
-        download_object(args.profile, obj.key, download_dir) for obj in selected_inference
+        download_object(args.profile, obj.key, download_dir, args.bucket) for obj in selected_inference
     ]
-    jams_paths = [download_object(args.profile, obj.key, download_dir) for obj in selected_jams]
+    jams_paths = [download_object(args.profile, obj.key, download_dir, args.bucket) for obj in selected_jams]
 
     predictions = load_predictions(inference_paths)
     jams = load_jams(jams_paths)

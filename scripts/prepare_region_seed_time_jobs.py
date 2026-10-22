@@ -46,19 +46,19 @@ def parse_args() -> argparse.Namespace:
         description="Prepare SageMaker shard jobs for central/non-central seed-time artifacts."
     )
     parser.add_argument("--region", default="us-east-1")
-    parser.add_argument("--bucket", default="sagemaker-congestion-bogota")
-    parser.add_argument("--role-arn", default="arn:aws:iam::195419001736:role/SagemakerExecutionRole")
+    parser.add_argument("--bucket", required=True)
+    parser.add_argument("--role-arn", required=True)
     parser.add_argument(
         "--image",
-        default="195419001736.dkr.ecr.us-east-1.amazonaws.com/congestion-bogota-sagemaker:temporal-features-20260331-194332",
+        required=True,
     )
-    parser.add_argument("--efs-id", default="fs-099e29197c0a3e353")
+    parser.add_argument("--efs-id", required=True)
     parser.add_argument("--efs-path", default="/data/datos_procesados")
     parser.add_argument(
         "--security-group-ids",
-        default="sg-0962698c0c8352ddd,sg-03590ecb70a82d570",
+        required=True,
     )
-    parser.add_argument("--subnets", default="subnet-017c79447d5151efe")
+    parser.add_argument("--subnets", required=True)
     parser.add_argument(
         "--instance-type",
         default="ml.r7i.4xlarge",
