@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     # Machine Learning & Deep Learning
-    "torch>=2.7.1",
+    "torch>=2.13.0",
     "torch-geometric>=2.6.1",
     "torch-geometric-temporal>=0.56.1",
     "torch-scatter>=2.1.2",
